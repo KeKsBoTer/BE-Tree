@@ -1,11 +1,14 @@
 CC = cc
-CFLAGS = -Wall
+CFLAGS = -O2 -Wall
 LDFLAGS = -lpthread -lm
 TARGS = btree
 
 all: $(TARGS)
 btree: btree.c 
-	$(CC) -g $(CFLAGS) $< -o btree $(LDFLAGS)
+	$(CC) $(CFLAGS) $< -o btree $(LDFLAGS)
+
+btree_debug: btree.c 
+	$(CC) -g -Wall $< -o btree $(LDFLAGS)
 
 btree_assembly: btree.c 
 	$(CC) -S $(CFLAGS) $< -o btree.asm
