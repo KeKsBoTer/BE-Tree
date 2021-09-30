@@ -2,12 +2,13 @@
 #include <string.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include <x86intrin.h>
 
 #define memcpy_sized(dst, src, n) memcpy(dst, src, (n) * sizeof(*(dst)))
 #define memmove_sized(dst, src, n) memmove(dst, src, (n) * sizeof(*(dst)))
 #define memset_sized(dst, value, n) memset(dst, value, (n) * sizeof(*(dst)))
 
-typedef uint16_t partial_key;
+typedef int16_t partial_key;
 typedef int i_value;
 
 typedef struct node
@@ -15,17 +16,17 @@ typedef struct node
     partial_key *keys;
     i_value *values;
     struct node **children;
-    int8_t min_deg;  // Minimum degree (defines the range for number of keys)
-    int8_t num_keys; // Current number of keys
+    uint8_t min_deg;  // Minimum degree (defines the range for number of keys)
+    uint8_t num_keys; // Current number of keys
     bool leaf;
 } node;
 
 node *node_create(int min_deg, bool is_leaf)
 {
     int node_size = sizeof(node);
-    int keys_size = (2 * t - 1) * sizeof(partial_key);
-    int values_size = (2 * t - 1) * sizeof(i_value);
-    int children_size = (2 * t) * sizeof(node **);
+    int keys_size = (2 * min_deg - 1) * sizeof(partial_key);
+    int values_size = (2 * min_deg - 1) * sizeof(i_value);
+    int children_size = (2 * min_deg) * sizeof(node **);
     int total_size = node_size + keys_size + values_size + children_size;
 
     // allocate all memory in one block
@@ -40,17 +41,37 @@ node *node_create(int min_deg, bool is_leaf)
     return n;
 }
 
-int find_index(partial_key *keys, int size, partial_key key)
+void print_byte_as_bits(int val)
 {
+    printf("0b");
+    for (int i = 16; 0 <= i; i--)
+    {
+        printf("%c", (val & (1 << i * 2)) ? '1' : '0');
+    }
+}
+
+unsigned int find_index(partial_key *keys, int size, partial_key key)
+{
+#if __AVX2__
+    // TODO support different key sizes and size > 256/keysize
+    __m256i a = _mm256_set1_epi16(key);
+    __m256i b = _mm256_lddqu_si256((__m256i const *)keys);
+    __m256i cmp = _mm256_cmpgt_epi16(a, b);
+    unsigned int g_mask = _mm256_movemask_epi8(cmp);
+    unsigned int bit_mask = ~((unsigned int)0) >> (32 - size * 2);
+    unsigned int idx = 16 - _lzcnt_u32(g_mask & bit_mask) / 2;
+    return idx;
+#else
     int i = 0;
     while (i < size && key > keys[i])
         i++;
     return i;
+#endif
 }
 
 i_value *node_get(node *n, partial_key key)
 {
-    int i = find_index(n->keys, n->num_keys, key);
+    unsigned int i = find_index(n->keys, n->num_keys, key);
 
     // If the found key is equal to k, return this node
     if (n->keys[i] == key)
@@ -72,17 +93,13 @@ void node_split_child(node *n, int i, node *y)
     z->num_keys = n->min_deg - 1;
 
     // Copy the last (t-1) keys of y to z
-    for (int j = 0; j < n->min_deg - 1; j++)
-    {
-        z->keys[j] = y->keys[j + n->min_deg];
-        z->values[j] = y->values[j + n->min_deg];
-    }
+    memcpy_sized(z->keys, y->keys + n->min_deg, n->min_deg - 1);
+    memcpy_sized(z->values, y->values + n->min_deg, n->min_deg - 1);
 
     // Copy the last t children of y to z
     if (y->leaf == false)
     {
-        for (int j = 0; j < n->min_deg; j++)
-            z->children[j] = y->children[j + n->min_deg];
+        memcpy_sized(z->children, y->children + n->min_deg, n->min_deg);
     }
 
     // Reduce the number of keys in y
@@ -90,19 +107,15 @@ void node_split_child(node *n, int i, node *y)
 
     // Since this node is going to have a new child,
     // create space of new child
-    for (int j = n->num_keys; j >= i + 1; j--)
-        n->children[j + 1] = n->children[j];
+    memmove_sized(n->children + 1, y->children, n->num_keys - i);
 
     // Link the new child to this node
     n->children[i + 1] = z;
 
     // A key of y will move to this node. Find the location of
     // new key and move all greater keys one space ahead
-    for (int j = n->num_keys - 1; j >= i; j--)
-    {
-        n->keys[j + 1] = n->keys[j];
-        n->values[j + 1] = n->values[j];
-    }
+    memmove_sized(z->keys + 1, y->keys, n->num_keys - i);
+    memmove_sized(z->values + 1, y->values, n->num_keys - i);
 
     // Copy the middle key of y to this node
     n->keys[i] = y->keys[n->min_deg - 1];
@@ -120,15 +133,12 @@ void node_insert_non_full(node *n, partial_key key, i_value value)
     // If this is a leaf node
     if (n->leaf == true)
     {
-        // The following loop does two things
+        // The following does two things
         // a) Finds the location of new key to be inserted
         // b) Moves all greater keys to one place ahead
-        while (i >= 0 && n->keys[i] > key)
-        {
-            n->keys[i + 1] = n->keys[i];
-            n->values[i + 1] = n->values[i];
-            i--;
-        }
+        i = find_index(n->keys, n->num_keys, key) - 1;
+        memmove_sized(n->keys + i + 1, n->keys + i, n->num_keys - i);
+        memmove_sized(n->values + i + 1, n->values + i, n->num_keys - i);
 
         // Insert the new key at found location
         n->keys[i + 1] = key;
@@ -138,8 +148,7 @@ void node_insert_non_full(node *n, partial_key key, i_value value)
     else // If this node is not leaf
     {
         // Find the child which is going to have the new key
-        while (i >= 0 && n->keys[i] > key)
-            i--;
+        i = find_index(n->keys, n->num_keys, key) - 1;
 
         // See if the found child is full
         if (n->children[i + 1]->num_keys == 2 * n->min_deg - 1)
@@ -300,29 +309,33 @@ int main(int argc, char *argv[])
         }
     }
     btree tree;
-    int order = 8;
+    int order = 256 / (sizeof(partial_key) * 8) + 1;
     btree_init(&tree, order / 2);
 
-    printf("inserting ");
+    printf("inserting...");
     for (int i = 0; i < test_values; i += 2)
     {
-        btree_insert(&tree, i, i * 2);
+        int x = i - (1 << 15);
+        btree_insert(&tree, x, x * 2);
     }
     for (int i = 1; i < test_values; i += 2)
     {
-        btree_insert(&tree, i, i * 2);
+        int x = i - (1 << 15);
+        btree_insert(&tree, x, x * 2);
     }
-    // btree_plot(&tree, "trees/final.dot");
-    printf("\n");
+    btree_plot(&tree, "trees/final.dot");
+    printf("done!\n");
 
-    printf("testing...\n ");
+    printf("testing...");
     i_value *v;
     for (int i = 0; i < test_values; i++)
     {
-        v = btree_get(&tree, i);
-        if (v == NULL || *v != i * 2)
-            printf("ERROR: %d: %d\n", i, v == NULL ? -1 : *v);
+        int x = i - (1 << 15);
+        v = btree_get(&tree, x);
+        if (v == NULL || *v != x * 2)
+            printf("ERROR: %d: %d\n", x, v == NULL ? -1 : *v);
     }
     btree_free(&tree);
+    printf("done!\n");
     return 0;
 }
