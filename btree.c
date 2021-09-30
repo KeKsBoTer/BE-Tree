@@ -5,243 +5,191 @@
 
 #define ORDER 5
 
-// macros for memcpy and memset for non byte values
-#define memcpy_sized(dst, src, n) memcpy(dst, src, (n) * sizeof(*(dst)))
-#define memmove_sized(dst, src, n) memmove(dst, src, (n) * sizeof(*(dst)))
-#define memset_sized(dst, value, n) memset(dst, value, (n) * sizeof(*(dst)))
-
 typedef uint16_t partial_key;
 typedef int i_value;
 
 typedef struct node
 {
-    partial_key keys[ORDER - 1];
-    // number of key-value pairs in the node
-    int num_keys;
-    // flag to mark leafe nodes
-    bool is_leafe;
-    struct node *children[ORDER];
-
-    i_value values[ORDER - 1];
-    struct node *parent;
+    partial_key *keys;
+    i_value *values;
+    int t; // Minimum degree (defines the range for number of keys)
+    struct node **children;
+    int n; // Current number of keys
+    bool leaf;
 } node;
 
-void init_node(node *n, node *parent)
+void node_init(node *n, int t, bool is_leafe)
 {
-    n->is_leafe = true;
-    n->parent = parent;
-    // TODO only for debug
-    memset_sized(n->keys, 0, ORDER - 1);
-    memset_sized(n->values, 0, ORDER - 1);
-    memset_sized(n->children, 0, ORDER);
+    n->t = t;
+    n->leaf = is_leafe;
+    n->keys = (partial_key *)malloc((2 * t - 1) * sizeof(partial_key));
+    n->values = (i_value *)malloc((2 * t - 1) * sizeof(i_value));
+    n->children = (node **)malloc((2 * t) * sizeof(node **));
+    n->n = 0;
 }
 
-int find_index(node *n, partial_key key)
+void node_traverse(node *n)
 {
-    for (int i = 0; i < n->num_keys; i++)
+    int i;
+    for (i = 0; i < n->n; i++)
     {
-        if (n->keys[i] >= key)
-        {
-            return i;
-        }
+        // If this is not leaf, then before printing key[i],
+        // traverse the subtree rooted with child C[i].
+        if (n->leaf == false)
+            node_traverse(n->children[i]);
+        printf("%d ", n->keys[i]);
     }
-    return n->num_keys;
+
+    // Print the subtree rooted with last child
+    if (n->leaf == false)
+        node_traverse(n->children[i]);
 }
 
 i_value *node_get(node *n, partial_key key)
 {
-    int idx = find_index(n, key);
-    if (n->keys[idx] == key)
-        return &n->values[idx];
+    int i = 0;
+    while (i < n->n && key > n->keys[i])
+        i++;
 
-    if (n->children[idx] != NULL)
-        return node_get(n->children[idx], key);
-    else
+    // If the found key is equal to k, return this node
+    if (n->keys[i] == key)
+        return &n->values[i];
+
+    // If key is not found here and this is a leaf node
+    if (n->leaf == true)
         return NULL;
+
+    // Go to the appropriate child
+    return node_get(n->children[i], key);
 }
 
-typedef struct split
+void node_split_child(node *n, int i, node *y)
 {
-    partial_key key;
-    i_value value;
-    node *left;
-    node *right;
-} split;
+    // Create a new node which is going to store (t-1) keys
+    // of y
+    node *z = (node *)malloc(sizeof(node));
+    node_init(z, y->t, y->leaf);
+    z->n = n->t - 1;
 
-// inserts a key value pair into a key and value buffer at a given position
-// shifts values from the index to the right
-void node_insert_pair(partial_key *keys, i_value *values, int size, int idx, partial_key key, i_value value)
-{
-    // move keys and values to the right
-    memmove_sized(keys + idx + 1, keys + idx, size - idx);
-    memmove_sized(values + idx + 1, values + idx, size - idx);
-    keys[idx] = key;
-    values[idx] = value;
+    // Copy the last (t-1) keys of y to z
+    for (int j = 0; j < n->t - 1; j++)
+    {
+        z->keys[j] = y->keys[j + n->t];
+        z->values[j] = y->values[j + n->t];
+    }
+
+    // Copy the last t children of y to z
+    if (y->leaf == false)
+    {
+        for (int j = 0; j < n->t; j++)
+            z->children[j] = y->children[j + n->t];
+    }
+
+    // Reduce the number of keys in y
+    y->n = n->t - 1;
+
+    // Since this node is going to have a new child,
+    // create space of new child
+    for (int j = n->n; j >= i + 1; j--)
+        n->children[j + 1] = n->children[j];
+
+    // Link the new child to this node
+    n->children[i + 1] = z;
+
+    // A key of y will move to this node. Find the location of
+    // new key and move all greater keys one space ahead
+    for (int j = n->n - 1; j >= i; j--)
+    {
+        n->keys[j + 1] = n->keys[j];
+        n->values[j + 1] = n->values[j];
+    }
+
+    // Copy the middle key of y to this node
+    n->keys[i] = y->keys[n->t - 1];
+    n->values[i] = y->values[n->t - 1];
+
+    // Increment count of keys in this node
+    n->n++;
 }
 
-void node_split(node *n, int idx, split s, node **root);
-
-void node_promote(node *n, split s, node **root)
+void node_insert_non_full(node *n, partial_key key, i_value value)
 {
-    if (n == NULL)
+    // Initialize index as index of rightmost element
+    int i = n->n - 1;
+
+    // If this is a leaf node
+    if (n->leaf == true)
     {
-        n = (node *)malloc(sizeof(node));
-        init_node(n, NULL);
-        n->is_leafe = false;
-        n->keys[0] = s.key;
-        n->values[0] = s.value;
-        n->num_keys = 1;
-        n->children[0] = s.left;
-        n->children[1] = s.right;
-        s.left->parent = n;
-        s.right->parent = n;
-        *root = n;
-        return;
-    }
-    if (n->num_keys == ORDER - 1)
-    {
-        int idx = find_index(n, s.key);
-        node_split(n, idx, s, root);
-    }
-    else
-    {
-        int idx = find_index(n, s.key);
-
-        node_insert_pair(n->keys, n->values, n->num_keys, idx, s.key, s.value);
-        s.left->parent = n;
-        s.right->parent = n;
-        // shoft next pointers to the right
-        memmove(n->children + idx + 2, n->children + idx + 1, (n->num_keys - idx) * sizeof(node *));
-        n->children[idx] = s.left;
-        n->children[idx + 1] = s.right;
-        n->num_keys++;
-        n->is_leafe = false;
-    }
-}
-
-// inserts the value into the node and then performs a split
-// the median of the new node is then promoted to its parent node
-// with the two nodes - created from the split - as children.
-// pointer to root is required if n == root and root needs to be changed after promotion.
-void node_split(node *n, int idx, split s, node **root)
-{
-    node *parent = n->parent;
-    // use current node as left one
-    node *right = (node *)malloc(sizeof(node));
-    init_node(right, NULL);
-
-    // split node into two nodes
-    // create buffers for moving stuff around
-    // TODO do it without the buffers (they are not needed, just make it simpler for now)
-    partial_key key_buffer[ORDER];
-    i_value value_buffer[ORDER];
-    memcpy_sized(key_buffer, n->keys, ORDER - 1);
-    memcpy_sized(value_buffer, n->values, ORDER - 1);
-    node_insert_pair((partial_key *)key_buffer, (i_value *)value_buffer, ORDER - 1, idx, s.key, s.value);
-
-    node *left = n;
-    // copy keys and values into new nodes
-    int median_i = ORDER / 2;
-    memcpy_sized(left->keys, key_buffer, median_i);
-    memcpy_sized(left->values, value_buffer, median_i);
-    memcpy_sized(right->keys, key_buffer + median_i + 1, ORDER - median_i - 1);
-    memcpy_sized(right->values, value_buffer + median_i + 1, ORDER - median_i - 1);
-    n->num_keys = median_i;
-    right->num_keys = ORDER - median_i - 1;
-
-    memcpy_sized(right->children, n->children + median_i + 1, ORDER - 1 - median_i);
-
-    if (s.left != NULL)
-    {
-        if (idx < median_i)
+        // The following loop does two things
+        // a) Finds the location of new key to be inserted
+        // b) Moves all greater keys to one place ahead
+        while (i >= 0 && n->keys[i] > key)
         {
-            // was inserted into left node
-            left->children[idx] = s.left;
-            left->children[idx + 1] = s.right;
-            right->is_leafe = false;
+            n->keys[i + 1] = n->keys[i];
+            n->values[i + 1] = n->values[i];
+            i--;
         }
-        else if (idx > median_i)
-        {
-            // was inserted into right node
-            right->children[ORDER - idx] = s.left;
-            right->children[ORDER - idx + 1] = s.right;
-            right->is_leafe = false;
-        }
-        else
-        {
-            // s.key is beeing promoted again
-            printf("not implemented :(\n");
-            exit(1);
-        }
-    }
 
-    split s_new = {key_buffer[median_i], value_buffer[median_i], left, right};
-    node_promote(parent, s_new, root);
-}
+        // Insert the new key at found location
+        n->keys[i + 1] = key;
+        n->values[i + 1] = value;
+        n->n++;
+    }
+    else // If this node is not leaf
+    {
+        // Find the child which is going to have the new key
+        while (i >= 0 && n->keys[i] > key)
+            i--;
 
-void node_put(node *n, partial_key key, i_value value, node **root)
-{
-    int idx = find_index(n, key);
-    if (n->keys[idx] == key)
-    {
-        n->values[idx] = value;
-        return;
-    }
-    if (n->is_leafe)
-    {
-        // if node is sfull rearange values
-        if (n->num_keys == ORDER - 1)
+        // See if the found child is full
+        if (n->children[i + 1]->n == 2 * n->t - 1)
         {
-            split s = {key, value, NULL, NULL};
-            node_split(n, idx, s, root);
+            // If the child is full, then split it
+            node_split_child(n, i + 1, n->children[i + 1]);
+
+            // After split, the middle key of C[i] goes up and
+            // C[i] is splitted into two.  See which of the two
+            // is going to have the new key
+            if (n->keys[i + 1] < key)
+                i++;
         }
-        // if node has empty spots, insert key
-        else
-        {
-            node_insert_pair(n->keys, n->values, n->num_keys, idx, key, value);
-            n->num_keys++;
-        }
-    }
-    else
-    {
-        // not a leafe, insert into children
-        node_put(n->children[idx], key, value, root);
+        node_insert_non_full(n->children[i + 1], key, value);
     }
 }
 
 void node_dot(node *n, FILE *fp)
 {
     fprintf(fp, "\"node%d\" [label = \"", (int)n);
-    for (int i = 0; i < ORDER - 1; i++)
+    for (int i = 0; i < n->t * 2; i++)
     {
         fprintf(fp, "<f%d>", i);
-        if (i < n->num_keys)
+        if (i < n->n)
         {
             fprintf(fp, "%d", n->keys[i]);
         }
-        if (i != ORDER - 2)
+        if (i != n->t * 2 - 1)
         {
             fprintf(fp, " | ");
         }
     }
     fprintf(fp, "\" shape = \"record\"];\n");
-    if (!n->is_leafe)
-        for (int i = 0; i < n->num_keys + 1; i++)
+    if (!n->leaf)
+        for (int i = 0; i < n->n + 1; i++)
         {
             node_dot(n->children[i], fp);
-            char orientation = i != n->num_keys ? 'w' : 'e';
-            int src_idx = i != n->num_keys ? i : i - 1;
+            char orientation = i != n->n ? 'w' : 'e';
+            int src_idx = i != n->n ? i : i - 1;
             fprintf(fp, "\"node%d\":f%d:s%c -> \"node%d\":n;", (int)n, src_idx, orientation, (int)n->children[i]);
         }
 }
 
-void free_node(node *n)
+void node_free(node *n)
 {
-    if (!n->is_leafe)
+    if (!n->leaf)
     {
-        for (int i = 0; i < n->num_keys + 1; i++)
+        for (int i = 0; i < n->n + 1; i++)
         {
-            free_node(n->children[i]);
+            node_free(n->children[i]);
         }
     }
     free(n);
@@ -250,55 +198,80 @@ void free_node(node *n)
 typedef struct btree
 {
     node *root;
+    int t;
 } btree;
 
-void init_btree(btree *tree)
+void btree_init(btree *tree, int order)
 {
     tree->root = NULL;
+    tree->t = order;
+}
+void btree_traverse(btree *tree)
+{
+    if (tree->root != NULL)
+        node_traverse(tree->root);
 }
 
-// searches for the given key in the tree
-// pointer to value is returns
-// NULL is returned if value does not exist
-i_value *tree_get(btree *tree, partial_key key)
+void btree_insert(btree *tree, partial_key key, i_value value)
 {
+    // If tree is empty
     if (tree->root == NULL)
     {
-        return NULL;
-    }
-    return node_get(tree->root, key);
-}
-
-// inserts value for given key into the tree
-// if key already exists within the tree the value is overridden
-void tree_put(btree *tree, partial_key key, i_value value)
-{
-    if (tree->root == NULL)
-    {
+        // Allocate memory for root
         tree->root = (node *)malloc(sizeof(node));
-        init_node(tree->root, NULL);
-
+        node_init(tree->root, tree->t, true);
         tree->root->keys[0] = key;
         tree->root->values[0] = value;
-        tree->root->num_keys = 1;
+        tree->root->n = 1; // Update number of keys in root
     }
-    else
+    else // If tree is not empty
     {
-        node_put(tree->root, key, value, &tree->root);
+        // If root is full, then tree grows in height
+        if (tree->root->n == 2 * tree->t - 1)
+        {
+            // Allocate memory for new root
+            node *s = (node *)malloc(sizeof(node));
+            node_init(s, tree->t, false);
+
+            // Make old root as child of new root
+            s->children[0] = tree->root;
+
+            // Split the old root and move 1 key to the new root
+            node_split_child(s, 0, tree->root);
+
+            // New root has two children now.  Decide which of the
+            // two children is going to have new key
+            int i = 0;
+            if (s->keys[0] < key)
+                i++;
+            node_insert_non_full(s->children[i], key, value);
+
+            // Change root
+            tree->root = s;
+        }
+        else // If root is not full, call insertNonFull for root
+            node_insert_non_full(tree->root, key, value);
     }
 }
 
-// frees nodes in tree
-// IMPORTANT: does not free the tree struct itself (it could live on the function stack)
-void free_tree(btree *tree)
+i_value *btree_get(btree *tree, partial_key key)
 {
     if (tree->root != NULL)
     {
-        free_node(tree->root);
+        return node_get(tree->root, key);
+    }
+    else
+    {
+        return NULL;
     }
 }
+void btree_free(btree *tree)
+{
+    if (tree->root != NULL)
+        node_free(tree->root);
+}
 
-void tree_dot(btree *tree, FILE *fp)
+void btree_dot(btree *tree, FILE *fp)
 {
     fprintf(fp, "digraph g {\ngraph [ rankdir = \"TP\"];\n");
     if (tree->root != NULL)
@@ -306,7 +279,7 @@ void tree_dot(btree *tree, FILE *fp)
     fprintf(fp, "\n}");
 }
 
-void plot_tree(btree *tree, const char *filename)
+void btree_plot(btree *tree, const char *filename)
 {
     // print tree
     FILE *fp = fopen(filename, "w");
@@ -315,7 +288,7 @@ void plot_tree(btree *tree, const char *filename)
         printf("file can't be opened\n");
         exit(1);
     }
-    tree_dot(tree, fp);
+    btree_dot(tree, fp);
     fclose(fp);
 }
 
@@ -333,30 +306,29 @@ int main(int argc, char *argv[])
         }
     }
     btree tree;
-    init_btree(&tree);
+    btree_init(&tree, ORDER);
 
     printf("inserting ");
     for (int i = 0; i < test_values; i += 2)
     {
         printf("%d, ", i);
-        tree_put(&tree, i, i * 2);
+        btree_insert(&tree, i, i * 2);
     }
     for (int i = 1; i < test_values; i += 2)
     {
         printf("%d, ", i);
-        plot_tree(&tree, "before.dot");
-        tree_put(&tree, i, i * 2);
-        plot_tree(&tree, "after.dot");
+        btree_insert(&tree, i, i * 2);
     }
+    btree_plot(&tree, "trees/final.dot");
     printf("\n");
 
     i_value *v;
     for (int i = 0; i < test_values; i++)
     {
-        v = tree_get(&tree, i);
+        v = btree_get(&tree, i);
         if (v == NULL || *v != i * 2)
             printf("ERROR: %d: %d\n", i, v == NULL ? -1 : *v);
     }
-    free_tree(&tree);
+    btree_free(&tree);
     return 0;
 }
