@@ -8,7 +8,17 @@
 #define memmove_sized(dst, src, n) memmove(dst, src, (n) * sizeof(*(dst)))
 #define memset_sized(dst, value, n) memset(dst, value, (n) * sizeof(*(dst)))
 
+#define KEY_SIZE 32
+#if KEY_SIZE == 16
 typedef int16_t partial_key;
+#define _mm256_cmpgt_epi(a, b) _mm256_cmpgt_epi16(a, b)
+#define _mm256_set1_epi(a) _mm256_set1_epi16(a)
+#else
+typedef int32_t partial_key;
+#define _mm256_cmpgt_epi(a, b) _mm256_cmpgt_epi32(a, b)
+#define _mm256_set1_epi(a) _mm256_set1_epi32(a)
+#endif
+
 typedef int i_value;
 
 typedef struct node
@@ -29,8 +39,9 @@ node *node_create(int min_deg, bool is_leaf)
     int children_size = (2 * min_deg) * sizeof(node **);
     int total_size = node_size + keys_size + values_size + children_size;
 
-    // allocate all memory in one block
-    uint8_t *buffer = (uint8_t *)malloc(total_size);
+    // allocate all memory in one block and align with 32 bits to ensure
+    // keys have 32 bits alignment for simd operations
+    uint8_t *buffer = (uint8_t *)aligned_alloc(32, (total_size + 31) / 32 * 32);
     node *n = (node *)buffer;
     n->min_deg = min_deg;
     n->leaf = is_leaf;
@@ -53,13 +64,33 @@ void print_byte_as_bits(int val)
 unsigned int find_index(partial_key *keys, int size, partial_key key)
 {
 #if __AVX2__
-    // TODO support different key sizes and size > 256/keysize
-    __m256i a = _mm256_set1_epi16(key);
-    __m256i b = _mm256_lddqu_si256((__m256i const *)keys);
-    __m256i cmp = _mm256_cmpgt_epi16(a, b);
-    unsigned int g_mask = _mm256_movemask_epi8(cmp);
-    unsigned int bit_mask = ~((unsigned int)0) >> (32 - size * 2);
-    unsigned int idx = 16 - _lzcnt_u32(g_mask & bit_mask) / 2;
+
+    int key_size = sizeof(key) * 8;
+
+    int idx = 0;
+    int num_iter = (size + key_size - 1) / key_size;
+    __m256i a = _mm256_set1_epi(key);
+    __m256i b, cmp;
+    // number of bits per register in the result
+    // see _mm256_movemask_epi8 documentation
+    int bb = key_size / 8;
+    // number of values that fit into the register
+    int rv = 256 / key_size;
+
+    for (int j = 0; j < num_iter; j++)
+    {
+        b = _mm256_load_si256((__m256i const *)(keys + j * rv));
+        cmp = _mm256_cmpgt_epi(a, b);
+        unsigned int g_mask = _mm256_movemask_epi8(cmp);
+        int offset = (j + 1) * rv > size ? size - (j * rv) : rv;
+        unsigned int bit_mask = ~((unsigned int)0) >> (32 - offset * bb);
+        // get index of first larger key in current window
+        int ab = _lzcnt_u32(g_mask & bit_mask);
+        int x = rv - ab / bb;
+        idx += x;
+        if (x < rv)
+            break;
+    }
     return idx;
 #else
     int i = 0;
