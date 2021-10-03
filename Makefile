@@ -1,17 +1,19 @@
 CC = cc 
 CFLAGS = -Wall -mavx2 -mlzcnt
 LDFLAGS = -lpthread -lm
-TARGS = btree
+TARGS = btree_test 
+
+ifeq ($(mode), debug)
+CFLAGS += -g
+endif
 
 all: $(TARGS)
-btree: btree.c 
-	$(CC) -O2 $(CFLAGS) $< -o btree $(LDFLAGS)
 
-btree_debug: btree.c 
-	$(CC) -g $(CFLAGS) $< -o btree $(LDFLAGS)
+btree.o: btree.c
+	$(CC) -O2 $(CFLAGS) $< -o btree.o -c 
 
-btree_assembly: btree.c 
-	$(CC) -S $(CFLAGS) $< -o btree.asm
+btree_test: btree_test.c btree.o
+	$(CC) -O2 $(CFLAGS) $< -o btree_test btree.o $(LDFLAGS)
 
 clean:
-	rm -f $(TARGS) btree.asm
+	rm -f btree.o btree_test.o btree_test btree_test.asm

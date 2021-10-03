@@ -1,5 +1,6 @@
 .vscode
-*.dSYNM/
+*.dSYM/
 *.dot
-btree
 *.asm
+*.o
+btree_test

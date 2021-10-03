@@ -3,33 +3,11 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <x86intrin.h>
+#include "./btree.h"
 
 #define memcpy_sized(dst, src, n) memcpy(dst, src, (n) * sizeof(*(dst)))
 #define memmove_sized(dst, src, n) memmove(dst, src, (n) * sizeof(*(dst)))
 #define memset_sized(dst, value, n) memset(dst, value, (n) * sizeof(*(dst)))
-
-#define KEY_SIZE 32
-#if KEY_SIZE == 16
-typedef int16_t partial_key;
-#define _mm256_cmpgt_epi(a, b) _mm256_cmpgt_epi16(a, b)
-#define _mm256_set1_epi(a) _mm256_set1_epi16(a)
-#else
-typedef int32_t partial_key;
-#define _mm256_cmpgt_epi(a, b) _mm256_cmpgt_epi32(a, b)
-#define _mm256_set1_epi(a) _mm256_set1_epi32(a)
-#endif
-
-typedef int i_value;
-
-typedef struct node
-{
-    partial_key *keys;
-    i_value *values;
-    struct node **children;
-    uint8_t min_deg;  // Minimum degree (defines the range for number of keys)
-    uint8_t num_keys; // Current number of keys
-    bool leaf;
-} node;
 
 node *node_create(int min_deg, bool is_leaf)
 {
@@ -50,15 +28,6 @@ node *node_create(int min_deg, bool is_leaf)
     n->values = (i_value *)(buffer + node_size + keys_size);
     n->children = (node **)(buffer + node_size + keys_size + values_size);
     return n;
-}
-
-void print_byte_as_bits(int val)
-{
-    printf("0b");
-    for (int i = 16; 0 <= i; i--)
-    {
-        printf("%c", (val & (1 << i * 2)) ? '1' : '0');
-    }
 }
 
 unsigned int find_index(partial_key *keys, int size, partial_key key)
@@ -197,32 +166,6 @@ void node_insert_non_full(node *n, partial_key key, i_value value)
     }
 }
 
-void node_dot(node *n, FILE *fp)
-{
-    fprintf(fp, "\"node%d\" [label = \"", (int)n);
-    for (int i = 0; i < n->min_deg * 2; i++)
-    {
-        fprintf(fp, "<f%d>", i);
-        if (i < n->num_keys)
-        {
-            fprintf(fp, "%d", n->keys[i]);
-        }
-        if (i != n->min_deg * 2 - 1)
-        {
-            fprintf(fp, " | ");
-        }
-    }
-    fprintf(fp, "\" shape = \"record\"];\n");
-    if (!n->leaf)
-        for (int i = 0; i < n->num_keys + 1; i++)
-        {
-            node_dot(n->children[i], fp);
-            char orientation = i != n->num_keys ? 'w' : 'e';
-            int src_idx = i != n->num_keys ? i : i - 1;
-            fprintf(fp, "\"node%d\":f%d:s%c -> \"node%d\":n;", (int)n, src_idx, orientation, (int)n->children[i]);
-        }
-}
-
 void node_free(node *n)
 {
     if (!n->leaf)
@@ -234,12 +177,6 @@ void node_free(node *n)
     }
     free(n);
 }
-
-typedef struct btree
-{
-    node *root;
-    int t;
-} btree;
 
 void btree_init(btree *tree, int t)
 {
@@ -303,70 +240,4 @@ void btree_free(btree *tree)
 {
     if (tree->root != NULL)
         node_free(tree->root);
-}
-
-void btree_dot(btree *tree, FILE *fp)
-{
-    fprintf(fp, "digraph g {\ngraph [ rankdir = \"TP\"];\n");
-    if (tree->root != NULL)
-        node_dot(tree->root, fp);
-    fprintf(fp, "\n}");
-}
-
-void btree_plot(btree *tree, const char *filename)
-{
-    // print tree
-    FILE *fp = fopen(filename, "w");
-    if (fp == NULL)
-    {
-        printf("file can't be opened\n");
-        exit(1);
-    }
-    btree_dot(tree, fp);
-    fclose(fp);
-}
-
-int main(int argc, char *argv[])
-{
-    int test_values = 20;
-    switch (argc)
-    {
-    case 2:
-        test_values = atoi(argv[1]);
-        if (test_values == 0)
-        {
-            printf("cannot convert '%s' to integer\n", argv[1]);
-            exit(1);
-        }
-    }
-    btree tree;
-    int order = 256 / (sizeof(partial_key) * 8) + 1;
-    btree_init(&tree, order / 2);
-
-    printf("inserting...");
-    for (int i = 0; i < test_values; i += 2)
-    {
-        int x = i - (1 << 15);
-        btree_insert(&tree, x, x * 2);
-    }
-    for (int i = 1; i < test_values; i += 2)
-    {
-        int x = i - (1 << 15);
-        btree_insert(&tree, x, x * 2);
-    }
-    btree_plot(&tree, "trees/final.dot");
-    printf("done!\n");
-
-    printf("testing...");
-    i_value *v;
-    for (int i = 0; i < test_values; i++)
-    {
-        int x = i - (1 << 15);
-        v = btree_get(&tree, x);
-        if (v == NULL || *v != x * 2)
-            printf("ERROR: %d: %d\n", x, v == NULL ? -1 : *v);
-    }
-    btree_free(&tree);
-    printf("done!\n");
-    return 0;
 }
