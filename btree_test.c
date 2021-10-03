@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include "./btree.h"
 
-#define SAVE_TREES
+//#define SAVE_TREES
 
 /**
  * @brief writes node (and its children) to a .dot dile
@@ -18,6 +18,7 @@ void node_dot(node *n, FILE *fp)
         if (i < n->num_keys)
         {
             fprintf(fp, "%d", n->keys[i]);
+            fprintf(fp, "(%d)", n->values[i]);
         }
         if (i != n->min_deg * 2 - 1)
         {

@@ -1,3 +1,5 @@
+/** implementation based on https://www.geeksforgeeks.org/insert-operation-in-b-tree/ **/
+
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
@@ -73,18 +75,21 @@ unsigned int find_index(partial_key *keys, int size, partial_key key)
 
 i_value *node_get(node *n, partial_key key)
 {
-    unsigned int i = find_index(n->keys, n->num_keys, key);
+    while (true)
+    {
+        unsigned int i = find_index(n->keys, n->num_keys, key);
 
-    // If the found key is equal to k, return this node
-    if (n->keys[i] == key)
-        return &n->values[i];
+        // If the found key is equal to k, return this node
+        if (n->keys[i] == key)
+            return &n->values[i];
 
-    // If key is not found here and this is a leaf node
-    if (n->leaf == true)
-        return NULL;
+        // If key is not found here and this is a leaf node
+        if (n->leaf == true)
+            return NULL;
 
-    // Go to the appropriate child
-    return node_get(n->children[i], key);
+        // Go to the appropriate child
+        n = n->children[i];
+    }
 }
 
 void node_split_child(node *n, int i, node *y)
@@ -116,8 +121,8 @@ void node_split_child(node *n, int i, node *y)
 
     // A key of y will move to this node. Find the location of
     // new key and move all greater keys one space ahead
-    memcpy_sized(right->keys + 1, y->keys, n->num_keys - i);
-    memcpy_sized(right->values + 1, y->values, n->num_keys - i);
+    memmove_sized(n->keys + 1 + i, n->keys + i, n->num_keys - i);
+    memmove_sized(n->values + 1 + i, n->values + i, n->num_keys - i);
 
     // Copy the middle key of y to this node
     n->keys[i] = y->keys[n->min_deg - 1];
@@ -169,8 +174,8 @@ void node_insert_non_full(node *n, partial_key key, i_value value)
             // If the child is full, then split it
             node_split_child(n, i + 1, n->children[i + 1]);
 
-            // After split, the middle key of C[i] goes up and
-            // C[i] is splitted into two.  See which of the two
+            // After split, the middle key of n->children[i] goes up and
+            // n->children[i] is splitted into two.  See which of the two
             // is going to have the new key
             if (n->keys[i + 1] < key)
                 i++;
