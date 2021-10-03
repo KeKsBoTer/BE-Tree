@@ -1,19 +1,27 @@
 CC = cc 
-CFLAGS = -Wall -mavx2 -mlzcnt
+CFLAGS =  -Wall -m64 # -mavx2 -mlzcnt
 LDFLAGS = -lpthread -lm
 TARGS = btree_test 
 
 ifeq ($(mode), debug)
 CFLAGS += -g
+else
+CFLAGS += -O2
 endif
 
 all: $(TARGS)
 
-btree.o: btree.c
-	$(CC) -O2 $(CFLAGS) $< -o btree.o -c 
+MurmurHash3.o: Murmurhash3/Murmurhash3.c
+	$(CC)  $< -o MurmurHash3.o -c 
 
-btree_test: btree_test.c btree.o
-	$(CC) -O2 $(CFLAGS) $< -o btree_test btree.o $(LDFLAGS)
+btree.o: btree.c MurmurHash3.o
+	$(CC) $(CFLAGS) $< -o btree.o -c 
+
+btree_test: btree_test.c btree.o MurmurHash3.o
+	$(CC) $(CFLAGS) $< -o btree_test btree.o MurmurHash3.o $(LDFLAGS)
 
 clean:
-	rm -f btree.o btree_test.o btree_test btree_test.asm
+	rm -f *.o btree_test *.asm 
+
+clean_trees:
+	rm -f trees/*.dot

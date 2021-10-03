@@ -3,7 +3,8 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <x86intrin.h>
-#include "./btree.h"
+#include "btree.h"
+#include "MurmurHash3/MurmurHash3.h"
 
 #define memcpy_sized(dst, src, n) memcpy(dst, src, (n) * sizeof(*(dst)))
 #define memmove_sized(dst, src, n) memmove(dst, src, (n) * sizeof(*(dst)))
@@ -12,9 +13,10 @@
 node *node_create(int min_deg, bool is_leaf)
 {
     int node_size = sizeof(node);
-    int keys_size = (2 * min_deg - 1) * sizeof(partial_key);
-    int values_size = (2 * min_deg - 1) * sizeof(i_value);
-    int children_size = (2 * min_deg) * sizeof(node **);
+    int order = 2 * min_deg; // order of the tree
+    int keys_size = (order - 1) * sizeof(partial_key);
+    int values_size = (order - 1) * sizeof(i_value);
+    int children_size = order * sizeof(node **);
     int total_size = node_size + keys_size + values_size + children_size;
 
     // allocate all memory in one block and align with 32 bits to ensure
@@ -89,17 +91,17 @@ void node_split_child(node *n, int i, node *y)
 {
     // Create a new node which is going to store (t-1) keys
     // of y
-    node *z = node_create(y->min_deg, y->leaf);
-    z->num_keys = n->min_deg - 1;
+    node *right = node_create(y->min_deg, y->leaf);
+    right->num_keys = n->min_deg - 1;
 
     // Copy the last (t-1) keys of y to z
-    memcpy_sized(z->keys, y->keys + n->min_deg, n->min_deg - 1);
-    memcpy_sized(z->values, y->values + n->min_deg, n->min_deg - 1);
+    memcpy_sized(right->keys, y->keys + n->min_deg, n->min_deg - 1);
+    memcpy_sized(right->values, y->values + n->min_deg, n->min_deg - 1);
 
     // Copy the last t children of y to z
     if (y->leaf == false)
     {
-        memcpy_sized(z->children, y->children + n->min_deg, n->min_deg);
+        memcpy_sized(right->children, y->children + n->min_deg, n->min_deg);
     }
 
     // Reduce the number of keys in y
@@ -107,15 +109,15 @@ void node_split_child(node *n, int i, node *y)
 
     // Since this node is going to have a new child,
     // create space of new child
-    memmove_sized(n->children + 1, y->children, n->num_keys - i);
+    memmove_sized(n->children + i + 2, n->children + i + 1, n->num_keys - i);
 
     // Link the new child to this node
-    n->children[i + 1] = z;
+    n->children[i + 1] = right;
 
     // A key of y will move to this node. Find the location of
     // new key and move all greater keys one space ahead
-    memmove_sized(z->keys + 1, y->keys, n->num_keys - i);
-    memmove_sized(z->values + 1, y->values, n->num_keys - i);
+    memcpy_sized(right->keys + 1, y->keys, n->num_keys - i);
+    memcpy_sized(right->values + 1, y->values, n->num_keys - i);
 
     // Copy the middle key of y to this node
     n->keys[i] = y->keys[n->min_deg - 1];
@@ -137,6 +139,11 @@ void node_insert_non_full(node *n, partial_key key, i_value value)
         // a) Finds the location of new key to be inserted
         // b) Moves all greater keys to one place ahead
         i = find_index(n->keys, n->num_keys, key) - 1;
+        if (n->keys[i + 1] == key)
+        {
+            n->values[i + 1] = value;
+            return;
+        }
         memmove_sized(n->keys + i + 1, n->keys + i, n->num_keys - i);
         memmove_sized(n->values + i + 1, n->values + i, n->num_keys - i);
 
@@ -149,6 +156,12 @@ void node_insert_non_full(node *n, partial_key key, i_value value)
     {
         // Find the child which is going to have the new key
         i = find_index(n->keys, n->num_keys, key) - 1;
+
+        if (n->keys[i + 1] == key)
+        {
+            n->values[i + 1] = value;
+            return;
+        }
 
         // See if the found child is full
         if (n->children[i + 1]->num_keys == 2 * n->min_deg - 1)
@@ -184,15 +197,17 @@ void btree_init(btree *tree, int t)
     tree->t = t;
 }
 
-void btree_insert(btree *tree, partial_key key, i_value value)
+void btree_insert(btree *tree, btree_key key, i_value value)
 {
+    btree_key_hash hashed_key = hash_key(key);
+    partial_key *p_keys = (partial_key *)&hashed_key;
     // If tree is empty
     if (tree->root == NULL)
     {
         // Allocate memory for root
         tree->root = node_create(tree->t, true);
 
-        tree->root->keys[0] = key;
+        tree->root->keys[0] = p_keys[0];
         tree->root->values[0] = value;
         tree->root->num_keys = 1; // Update number of keys in root
     }
@@ -213,31 +228,48 @@ void btree_insert(btree *tree, partial_key key, i_value value)
             // New root has two children now.  Decide which of the
             // two children is going to have new key
             int i = 0;
-            if (s->keys[0] < key)
+            if (s->keys[0] < p_keys[0])
                 i++;
-            node_insert_non_full(s->children[i], key, value);
+            node_insert_non_full(s->children[i], p_keys[0], value);
 
             // Change root
             tree->root = s;
         }
         else // If root is not full, call insertNonFull for root
-            node_insert_non_full(tree->root, key, value);
+            node_insert_non_full(tree->root, p_keys[0], value);
     }
 }
 
-i_value *btree_get(btree *tree, partial_key key)
+i_value *btree_get(btree *tree, btree_key key)
 {
+    btree_key_hash hashed_key = hash_key(key);
+    partial_key *p_keys = (partial_key *)&hashed_key;
+
     if (tree->root != NULL)
     {
-        return node_get(tree->root, key);
+        return node_get(tree->root, p_keys[0]);
     }
     else
     {
         return NULL;
     }
 }
+
+int order(btree *tree)
+{
+    return tree->t * 2 + 1;
+}
+
 void btree_free(btree *tree)
 {
     if (tree->root != NULL)
         node_free(tree->root);
+}
+
+btree_key_hash hash_key(btree_key key)
+{
+    btree_key_hash hashed_key[2];
+    MurmurHash3_x64_128(&key, sizeof(btree_key), 0, hashed_key);
+    // TODO use not only first 64 bits of hash
+    return hashed_key[0];
 }

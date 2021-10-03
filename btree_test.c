@@ -1,6 +1,14 @@
 #include <stdio.h>
 #include "./btree.h"
 
+#define SAVE_TREES
+
+/**
+ * @brief writes node (and its children) to a .dot dile
+ * 
+ * @param n reference to node struct
+ * @param fp file to write to
+ */
 void node_dot(node *n, FILE *fp)
 {
     fprintf(fp, "\"node%d\" [label = \"", (int)n);
@@ -9,7 +17,7 @@ void node_dot(node *n, FILE *fp)
         fprintf(fp, "<f%d>", i);
         if (i < n->num_keys)
         {
-            fprintf(fp, "%lld", n->keys[i]);
+            fprintf(fp, "%d", n->keys[i]);
         }
         if (i != n->min_deg * 2 - 1)
         {
@@ -20,10 +28,17 @@ void node_dot(node *n, FILE *fp)
     if (!n->leaf)
         for (int i = 0; i < n->num_keys + 1; i++)
         {
-            node_dot(n->children[i], fp);
-            char orientation = i != n->num_keys ? 'w' : 'e';
-            int src_idx = i != n->num_keys ? i : i - 1;
-            fprintf(fp, "\"node%d\":f%d:s%c -> \"node%d\":n;", (int)n, src_idx, orientation, (int)n->children[i]);
+            if (n->children[i] != NULL)
+            {
+                node_dot(n->children[i], fp);
+                char orientation = i != n->num_keys ? 'w' : 'e';
+                int src_idx = i != n->num_keys ? i : i - 1;
+                fprintf(fp, "\"node%d\":f%d:s%c -> \"node%d\":n;", (int)n, src_idx, orientation, (int)n->children[i]);
+            }
+            else
+            {
+                printf("ERROR: child %d of node [%d,%d,..] is null\n", i, n->keys[0], n->keys[1]);
+            }
         }
 }
 
@@ -64,28 +79,29 @@ int main(int argc, char *argv[])
     btree tree;
     int order = 256 / (sizeof(partial_key) * 8) + 1;
     btree_init(&tree, order / 2);
-
-    printf("inserting...");
-    for (int i = 0; i < test_values; i += 2)
+    printf("inserting...\n");
+#ifdef SAVE_TREES
+    char fn[100];
+#endif
+    for (int i = 0; i < test_values; i++)
     {
-        int x = i - (1 << 15);
-        btree_insert(&tree, x, x * 2);
-    }
-    for (int i = 1; i < test_values; i += 2)
-    {
-        int x = i - (1 << 15);
-        btree_insert(&tree, x, x * 2);
+        int x = i;
+        btree_insert(&tree, x, x);
+#ifdef SAVE_TREES
+        sprintf(fn, "trees/tree_%d.dot", x);
+        btree_plot(&tree, fn);
+#endif
     }
     btree_plot(&tree, "trees/final.dot");
     printf("done!\n");
 
-    printf("testing...");
+    printf("testing...\n");
     i_value *v;
     for (int i = 0; i < test_values; i++)
     {
-        int x = i - (1 << 15);
+        int x = i;
         v = btree_get(&tree, x);
-        if (v == NULL || *v != x * 2)
+        if (v == NULL || *v != x)
             printf("ERROR: %d: %d\n", x, v == NULL ? -1 : *v);
     }
     btree_free(&tree);
