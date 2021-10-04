@@ -12,22 +12,22 @@
 // define macros for the AVX functions based on the KEY_SIZE
 
 #if KEY_SIZE == 8
-typedef uint8_t partial_key;
+typedef int8_t partial_key;
 #define _mm256_cmpgt_epi(a, b) _mm256_cmpgt_epi8(a, b)
 #define _mm256_set1_epi(a) _mm256_set1_epi8(a)
 
 #elif KEY_SIZE == 16
-typedef uint16_t partial_key;
+typedef int16_t partial_key;
 #define _mm256_cmpgt_epi(a, b) _mm256_cmpgt_epi16(a, b)
 #define _mm256_set1_epi(a) _mm256_set1_epi16(a)
 
 #elif KEY_SIZE == 32
-typedef uint32_t partial_key;
+typedef int32_t partial_key;
 #define _mm256_cmpgt_epi(a, b) _mm256_cmpgt_epi32(a, b)
 #define _mm256_set1_epi(a) _mm256_set1_epi32(a)
 
 #elif KEY_SIZE == 64
-typedef uint64_t partial_key;
+typedef int64_t partial_key;
 #define _mm256_cmpgt_epi(a, b) _mm256_cmpgt_epi64(a, b)
 #define _mm256_set1_epi(a) _mm256_set1_epi64x(a)
 
@@ -40,6 +40,13 @@ typedef uint64_t partial_key;
  */
 typedef int i_value;
 
+/** a node value can either be a value or a reference to another tree / node **/
+typedef union node_value
+{
+    i_value value;
+    struct node *next;
+} node_value;
+
 /**
  * @brief a node within a btree
  */
@@ -47,14 +54,16 @@ typedef struct node
 {
     /** list of keys within the node**/
     partial_key *keys;
-    i_value *values;
+    node_value *values;
     struct node **children;
     /** Minimum degree (defines the range for number of keys) **/
-    int min_deg; //
+    uint16_t min_deg; //
     /** Current number of keys / values within the node **/
-    int num_keys;
+    uint16_t num_keys;
     /** indicator if a node is a leaf node **/
     bool leaf;
+    /** bitmap that says if a value is a pointer to a value or another tree **/
+    uint64_t tree_end;
 } node;
 
 /**

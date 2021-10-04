@@ -5,8 +5,10 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <x86intrin.h>
+
 #include "btree.h"
 #include "MurmurHash3/MurmurHash3.h"
+#include "bitmap.h"
 
 #define memcpy_sized(dst, src, n) memcpy(dst, src, (n) * sizeof(*(dst)))
 #define memmove_sized(dst, src, n) memmove(dst, src, (n) * sizeof(*(dst)))
@@ -15,9 +17,11 @@
 node *node_create(int min_deg, bool is_leaf)
 {
     int node_size = sizeof(node);
+    // rounding up to multiple of 32 bits to ensure 32-bit alignment for keys
+    node_size = (node_size + 31) / 32 * 32;
     int order = 2 * min_deg; // order of the tree
     int keys_size = (order - 1) * sizeof(partial_key);
-    int values_size = (order - 1) * sizeof(i_value);
+    int values_size = (order - 1) * sizeof(node_value);
     int children_size = order * sizeof(node **);
     int total_size = node_size + keys_size + values_size + children_size;
 
@@ -29,7 +33,7 @@ node *node_create(int min_deg, bool is_leaf)
     n->leaf = is_leaf;
     n->num_keys = 0;
     n->keys = (partial_key *)(buffer + node_size);
-    n->values = (i_value *)(buffer + node_size + keys_size);
+    n->values = (node_value *)(buffer + node_size + keys_size);
     n->children = (node **)(buffer + node_size + keys_size + values_size);
     return n;
 }
@@ -37,7 +41,6 @@ node *node_create(int min_deg, bool is_leaf)
 unsigned int find_index(partial_key *keys, int size, partial_key key)
 {
 #if __AVX2__
-
     int key_size = sizeof(key) * 8;
 
     int idx = 0;
@@ -81,7 +84,7 @@ i_value *node_get(node *n, partial_key key)
 
         // If the found key is equal to k, return this node
         if (n->keys[i] == key)
-            return &n->values[i];
+            return &n->values[i].value;
 
         // If key is not found here and this is a leaf node
         if (n->leaf == true)
@@ -146,7 +149,7 @@ void node_insert_non_full(node *n, partial_key key, i_value value)
         i = find_index(n->keys, n->num_keys, key) - 1;
         if (n->keys[i + 1] == key)
         {
-            n->values[i + 1] = value;
+            n->values[i + 1].value = value;
             return;
         }
         memmove_sized(n->keys + i + 1, n->keys + i, n->num_keys - i);
@@ -154,7 +157,7 @@ void node_insert_non_full(node *n, partial_key key, i_value value)
 
         // Insert the new key at found location
         n->keys[i + 1] = key;
-        n->values[i + 1] = value;
+        n->values[i + 1].value = value;
         n->num_keys++;
     }
     else // If this node is not leaf
@@ -164,7 +167,7 @@ void node_insert_non_full(node *n, partial_key key, i_value value)
 
         if (n->keys[i + 1] == key)
         {
-            n->values[i + 1] = value;
+            n->values[i + 1].value = value;
             return;
         }
 
@@ -213,7 +216,7 @@ void btree_insert(btree *tree, btree_key key, i_value value)
         tree->root = node_create(tree->t, true);
 
         tree->root->keys[0] = p_keys[0];
-        tree->root->values[0] = value;
+        tree->root->values[0].value = value;
         tree->root->num_keys = 1; // Update number of keys in root
     }
     else // If tree is not empty
@@ -273,8 +276,8 @@ void btree_free(btree *tree)
 
 btree_key_hash hash_key(btree_key key)
 {
-    btree_key_hash hashed_key[2];
-    MurmurHash3_x64_128(&key, sizeof(btree_key), 0, hashed_key);
+    __uint128_t hashed_key;
+    MurmurHash3_x64_128(&key, sizeof(btree_key), 42, &hashed_key);
     // TODO use not only first 64 bits of hash
-    return hashed_key[0];
+    return hashed_key % UINT64_MAX;
 }

@@ -18,7 +18,7 @@ void node_dot(node *n, FILE *fp)
         if (i < n->num_keys)
         {
             fprintf(fp, "%d", n->keys[i]);
-            fprintf(fp, "(%d)", n->values[i]);
+            fprintf(fp, "(%d)", n->values[i].value);
         }
         if (i != n->min_deg * 2 - 1)
         {
