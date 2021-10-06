@@ -40,11 +40,20 @@ typedef int64_t partial_key;
  */
 typedef int i_value;
 
+typedef int64_t btree_key;
+typedef int64_t btree_key_hash;
+
+typedef struct pair
+{
+    i_value value;
+    btree_key_hash key;
+} pair;
+
 /** a node value can either be a value or a reference to another tree / node **/
 typedef union node_value
 {
-    i_value value;
-    struct node *next;
+    pair pair;
+    struct btree *next;
 } node_value;
 
 /**
@@ -87,13 +96,11 @@ node *node_create(int min_deg, bool is_leaf);
  */
 unsigned int find_index(partial_key *keys, int size, partial_key key);
 
-i_value *node_get(node *n, partial_key key);
+i_value *node_get(node *n, partial_key *keys, int num_keys);
 void node_split_child(node *n, int i, node *y);
-void node_insert_non_full(node *n, partial_key key, i_value value);
+void node_insert_non_full(node *n, partial_key *keys, int num_keys, i_value value, btree_key_hash full_key);
 void node_free(node *n);
 
-typedef int64_t btree_key;
-typedef int64_t btree_key_hash;
 typedef struct btree
 {
     node *root;
@@ -105,6 +112,7 @@ void btree_init(btree *tree, int t);
 
 i_value *btree_get(btree *tree, btree_key key);
 void btree_insert(btree *tree, btree_key key, i_value value);
+void btree_insert_partial(btree *tree, partial_key *keys, int num_keys, i_value value, btree_key_hash full_key);
 
 /** returns the order of the tree (minimum number of elements per node * 2 + 1) **/
 int order(btree *tree);

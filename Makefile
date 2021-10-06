@@ -1,10 +1,10 @@
-CC = cc 
+CC = gcc 
 CFLAGS =  -Wall -m64 -mavx2 -mlzcnt
 LDFLAGS = -lpthread -lm
 TARGS = btree_test 
 
 ifeq ($(mode), debug)
-CFLAGS += -g
+CFLAGS += -Og
 else
 CFLAGS += -O2
 endif
@@ -12,9 +12,9 @@ endif
 all: $(TARGS)
 
 MurmurHash3.o: Murmurhash3/Murmurhash3.c
-	$(CC)  $< -o MurmurHash3.o -c 
+	$(CC) $(CFLAGS)  $< -o MurmurHash3.o -c 
 
-btree.o: btree.c btree.h MurmurHash3.o
+btree.o: btree.c btree.h bitmap.h MurmurHash3.o
 	$(CC) $(CFLAGS) $< -o btree.o -c 
 
 btree_test: btree_test.c btree.o MurmurHash3.o

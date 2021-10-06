@@ -10,6 +10,8 @@
 #include "MurmurHash3/MurmurHash3.h"
 #include "bitmap.h"
 
+#define HASH_KEY
+
 #define memcpy_sized(dst, src, n) memcpy(dst, src, (n) * sizeof(*(dst)))
 #define memmove_sized(dst, src, n) memmove(dst, src, (n) * sizeof(*(dst)))
 #define memset_sized(dst, value, n) memset(dst, value, (n) * sizeof(*(dst)))
@@ -35,6 +37,7 @@ node *node_create(int min_deg, bool is_leaf)
     n->keys = (partial_key *)(buffer + node_size);
     n->values = (node_value *)(buffer + node_size + keys_size);
     n->children = (node **)(buffer + node_size + keys_size + values_size);
+    n->tree_end = 0;
     return n;
 }
 
@@ -76,15 +79,25 @@ unsigned int find_index(partial_key *keys, int size, partial_key key)
 #endif
 }
 
-i_value *node_get(node *n, partial_key key)
+i_value *node_get(node *n, partial_key *keys, int num_keys)
 {
+    partial_key key = keys[0];
     while (true)
     {
         unsigned int i = find_index(n->keys, n->num_keys, key);
 
         // If the found key is equal to k, return this node
-        if (n->keys[i] == key)
-            return &n->values[i].value;
+        if (n->keys[i] == key && i < n->num_keys)
+        {
+            if (get_bit(&n->tree_end, i) == 0)
+            {
+                return &n->values[i].pair.value;
+            }
+            else
+            {
+                return node_get(n->values[i].next->root, keys + 1, num_keys - 1);
+            }
+        }
 
         // If key is not found here and this is a leaf node
         if (n->leaf == true)
@@ -105,6 +118,8 @@ void node_split_child(node *n, int i, node *y)
     // Copy the last (t-1) keys of y to z
     memcpy_sized(right->keys, y->keys + n->min_deg, n->min_deg - 1);
     memcpy_sized(right->values, y->values + n->min_deg, n->min_deg - 1);
+    right->tree_end = y->tree_end;
+    shift_right(&right->tree_end, n->min_deg);
 
     // Copy the last t children of y to z
     if (y->leaf == false)
@@ -113,6 +128,12 @@ void node_split_child(node *n, int i, node *y)
     }
 
     // Reduce the number of keys in y
+
+    for (int i = n->min_deg; i < y->num_keys; i++)
+    {
+        if (get_bit(&y->tree_end, i) == 1)
+            clear_bit(&y->tree_end, i);
+    }
     y->num_keys = n->min_deg - 1;
 
     // Since this node is going to have a new child,
@@ -126,64 +147,107 @@ void node_split_child(node *n, int i, node *y)
     // new key and move all greater keys one space ahead
     memmove_sized(n->keys + 1 + i, n->keys + i, n->num_keys - i);
     memmove_sized(n->values + 1 + i, n->values + i, n->num_keys - i);
+    shift_one_left(&n->tree_end, i);
 
     // Copy the middle key of y to this node
     n->keys[i] = y->keys[n->min_deg - 1];
     n->values[i] = y->values[n->min_deg - 1];
+    if (get_bit(&y->tree_end, n->min_deg - 1) == 0)
+    {
+        clear_bit(&n->tree_end, i);
+    }
+    else
+    {
+        set_bit(&n->tree_end, i);
+    }
 
     // Increment count of keys in this node
     n->num_keys++;
 }
 
-void node_insert_non_full(node *n, partial_key key, i_value value)
+void node_insert_non_full(node *n, partial_key *keys, int num_keys, i_value value, btree_key_hash full_key)
 {
-    // Initialize index as index of rightmost element
-    int i = n->num_keys - 1;
-
-    // If this is a leaf node
-    if (n->leaf == true)
+    partial_key key = keys[0];
+    while (true)
     {
-        // The following does two things
-        // a) Finds the location of new key to be inserted
-        // b) Moves all greater keys to one place ahead
-        i = find_index(n->keys, n->num_keys, key) - 1;
-        if (n->keys[i + 1] == key)
+        // Initialize index as index of rightmost element
+        int i = find_index(n->keys, n->num_keys, key);
+
+        if (n->keys[i] == key && i < n->num_keys)
         {
-            n->values[i + 1].value = value;
+            if (get_bit(&n->tree_end, i) == 0)
+            {
+                if (num_keys == 1)
+                {
+                    // reached end of subtrees
+                    n->values[i].pair.value = value;
+                }
+                else
+                {
+                    // TODO this can be done more efficient
+                    btree *subtree = (btree *)malloc(sizeof(btree));
+                    btree_init(subtree, n->min_deg);
+                    // insert current value into new subtree
+                    partial_key *p_keys = (partial_key *)&n->values[i].pair.key;
+                    int full_key_size = sizeof(btree_key_hash) / sizeof(partial_key);
+                    btree_insert_partial(subtree, p_keys + (full_key_size - (num_keys - 1)), num_keys - 1, n->values[i].pair.value, n->values[i].pair.key);
+
+                    btree_insert_partial(subtree, keys + 1, num_keys - 1, value, full_key);
+                    n->values[i].next = subtree;
+                    set_bit(&n->tree_end, i);
+                }
+            }
+            else
+            {
+                btree_insert_partial(n->values[i].next, keys + 1, num_keys - 1, value, full_key);
+            }
             return;
         }
-        memmove_sized(n->keys + i + 1, n->keys + i, n->num_keys - i);
-        memmove_sized(n->values + i + 1, n->values + i, n->num_keys - i);
-
-        // Insert the new key at found location
-        n->keys[i + 1] = key;
-        n->values[i + 1].value = value;
-        n->num_keys++;
-    }
-    else // If this node is not leaf
-    {
-        // Find the child which is going to have the new key
-        i = find_index(n->keys, n->num_keys, key) - 1;
-
-        if (n->keys[i + 1] == key)
+        // If this is a leaf node
+        if (n->leaf == true)
         {
-            n->values[i + 1].value = value;
+            // Moves all greater keys to one place ahead
+
+            memmove_sized(n->keys + i, n->keys + i - 1, n->num_keys - (i - 1));
+            memmove_sized(n->values + i, n->values + i - 1, n->num_keys - (i - 1));
+
+            // shift value flags accordingly
+            // note: we use shift left since index 0 is least significant bit in bitmap
+            shift_one_left(&n->tree_end, i);
+
+            // Insert the new key at found location
+            n->keys[i] = key;
+            n->values[i].pair.key = full_key;
+            n->values[i].pair.value = value;
+            n->num_keys++;
+            clear_bit(&n->tree_end, i);
             return;
         }
 
         // See if the found child is full
-        if (n->children[i + 1]->num_keys == 2 * n->min_deg - 1)
+        if (n->children[i]->num_keys == 2 * n->min_deg - 1)
         {
+            // TODO check if try find fist and then insert is faster
             // If the child is full, then split it
-            node_split_child(n, i + 1, n->children[i + 1]);
+            node_split_child(n, i, n->children[i]);
 
             // After split, the middle key of n->children[i] goes up and
             // n->children[i] is splitted into two.  See which of the two
             // is going to have the new key
-            if (n->keys[i + 1] < key)
+            if (n->keys[i] < key)
                 i++;
+
+            if (n->keys[i] == key)
+                // in rare cases we make a unecessary splits
+                // in this cases we need to retry the insertion for the current node
+                // this happens for about 0,0025% of all insertions
+                continue;
         }
-        node_insert_non_full(n->children[i + 1], key, value);
+        // set node to child for next iteration
+        // exception: node that was split
+        //
+        // if (n->keys[i] != key)
+        n = n->children[i];
     }
 }
 
@@ -194,6 +258,14 @@ void node_free(node *n)
         for (int i = 0; i < n->num_keys + 1; i++)
         {
             node_free(n->children[i]);
+        }
+    }
+    for (int i = 0; i < n->num_keys; i++)
+    {
+        if (get_bit(&n->tree_end, i) == 1)
+        {
+            btree_free(n->values[i].next);
+            free(n->values[i].next);
         }
     }
     free(n);
@@ -209,14 +281,22 @@ void btree_insert(btree *tree, btree_key key, i_value value)
 {
     btree_key_hash hashed_key = hash_key(key);
     partial_key *p_keys = (partial_key *)&hashed_key;
+    int num_partial_keys = sizeof(btree_key_hash) / sizeof(partial_key);
+
+    btree_insert_partial(tree, p_keys, num_partial_keys, value, hashed_key);
+}
+
+void btree_insert_partial(btree *tree, partial_key *keys, int num_keys, i_value value, btree_key_hash full_key)
+{
     // If tree is empty
     if (tree->root == NULL)
     {
         // Allocate memory for root
         tree->root = node_create(tree->t, true);
 
-        tree->root->keys[0] = p_keys[0];
-        tree->root->values[0].value = value;
+        tree->root->keys[0] = keys[0];
+        tree->root->values[0].pair.key = full_key;
+        tree->root->values[0].pair.value = value;
         tree->root->num_keys = 1; // Update number of keys in root
     }
     else // If tree is not empty
@@ -236,15 +316,15 @@ void btree_insert(btree *tree, btree_key key, i_value value)
             // New root has two children now.  Decide which of the
             // two children is going to have new key
             int i = 0;
-            if (s->keys[0] < p_keys[0])
+            if (s->keys[0] < keys[0])
                 i++;
-            node_insert_non_full(s->children[i], p_keys[0], value);
+            node_insert_non_full(s->children[i], keys, num_keys, value, full_key);
 
             // Change root
             tree->root = s;
         }
         else // If root is not full, call insertNonFull for root
-            node_insert_non_full(tree->root, p_keys[0], value);
+            node_insert_non_full(tree->root, keys, num_keys, value, full_key);
     }
 }
 
@@ -252,10 +332,11 @@ i_value *btree_get(btree *tree, btree_key key)
 {
     btree_key_hash hashed_key = hash_key(key);
     partial_key *p_keys = (partial_key *)&hashed_key;
+    int num_partial_keys = sizeof(btree_key_hash) / sizeof(partial_key);
 
     if (tree->root != NULL)
     {
-        return node_get(tree->root, p_keys[0]);
+        return node_get(tree->root, p_keys, num_partial_keys);
     }
     else
     {
@@ -276,8 +357,13 @@ void btree_free(btree *tree)
 
 btree_key_hash hash_key(btree_key key)
 {
-    __uint128_t hashed_key;
-    MurmurHash3_x64_128(&key, sizeof(btree_key), 42, &hashed_key);
-    // TODO use not only first 64 bits of hash
-    return hashed_key % UINT64_MAX;
+#ifdef HASH_EKY
+    uint64_t hashed_key[2];
+    //MurmurHash3_x64_128(&key, sizeof(btree_key), 42, &hashed_key);
+    // truncate hash to 64 bit
+    // this is the way, according to https://security.stackexchange.com/questions/97377/secure-way-to-shorten-a-hash
+    return hashed_key[0];
+#else
+    return key;
+#endif
 }

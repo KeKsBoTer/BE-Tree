@@ -11,14 +11,14 @@
  */
 void node_dot(node *n, FILE *fp)
 {
-    fprintf(fp, "\"node%d\" [label = \"", (int)n);
+    fprintf(fp, "\"node%lu\" [label = \"", (uintptr_t)n);
     for (int i = 0; i < n->min_deg * 2; i++)
     {
         fprintf(fp, "<f%d>", i);
         if (i < n->num_keys)
         {
             fprintf(fp, "%d", n->keys[i]);
-            fprintf(fp, "(%d)", n->values[i].value);
+            fprintf(fp, "(%d)", n->values[i].pair.value);
         }
         if (i != n->min_deg * 2 - 1)
         {
@@ -34,7 +34,7 @@ void node_dot(node *n, FILE *fp)
                 node_dot(n->children[i], fp);
                 char orientation = i != n->num_keys ? 'w' : 'e';
                 int src_idx = i != n->num_keys ? i : i - 1;
-                fprintf(fp, "\"node%d\":f%d:s%c -> \"node%d\":n;", (int)n, src_idx, orientation, (int)n->children[i]);
+                fprintf(fp, "\"node%lu\":f%d:s%c -> \"node%lu\":n;", (uintptr_t)n, src_idx, orientation, (uintptr_t)n->children[i]);
             }
             else
             {
@@ -66,7 +66,7 @@ void btree_plot(btree *tree, const char *filename)
 
 int main(int argc, char *argv[])
 {
-    int test_values = 20;
+    int test_values = 60000;
     switch (argc)
     {
     case 2:
@@ -80,7 +80,7 @@ int main(int argc, char *argv[])
     btree tree;
     int order = 256 / (sizeof(partial_key) * 8) + 1;
     btree_init(&tree, order / 2);
-    printf("inserting...\n");
+    printf("inserting %d pairs...\n", test_values);
 #ifdef SAVE_TREES
     char fn[100];
 #endif
@@ -88,12 +88,18 @@ int main(int argc, char *argv[])
     {
         int x = i;
         btree_insert(&tree, x, x);
+        if (i % (test_values / 10) == 0)
+        {
+            printf("progress: %d%%\n", (int)(100 * ((float)i) / test_values));
+        }
 #ifdef SAVE_TREES
         sprintf(fn, "trees/tree_%d.dot", x);
         btree_plot(&tree, fn);
 #endif
     }
+#ifdef SAVE_TREES
     btree_plot(&tree, "trees/final.dot");
+#endif
     printf("done!\n");
 
     printf("testing...\n");
@@ -102,6 +108,10 @@ int main(int argc, char *argv[])
     {
         int x = i;
         v = btree_get(&tree, x);
+        if (i % (test_values / 10) == 0)
+        {
+            printf("progress: %d%%\n", (int)(100 * ((float)i) / test_values));
+        }
         if (v == NULL || *v != x)
             printf("ERROR: %d: %d\n", x, v == NULL ? -1 : *v);
     }
