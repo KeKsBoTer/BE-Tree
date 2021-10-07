@@ -1,11 +1,46 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include <x86intrin.h>
 
-#define ORDER 6
+#define memcpy_sized(dst, src, n) memcpy(dst, src, (n) * sizeof(*(dst)))
+#define memmove_sized(dst, src, n) memmove(dst, src, (n) * sizeof(*(dst)))
+#define memset_sized(dst, value, n) memset(dst, value, (n) * sizeof(*(dst)))
+
+/**
+ * @brief size of the keys in the binary tree in bits
+ */
+#define KEY_SIZE 32
+
+// define macros for the AVX functions based on the KEY_SIZE
+
+#if KEY_SIZE == 8
+typedef int8_t key_t;
+#define _mm256_cmpgt_epi(a, b) _mm256_cmpgt_epi8(a, b)
+#define _mm256_set1_epi(a) _mm256_set1_epi8(a)
+
+#elif KEY_SIZE == 16
+typedef int16_t key_t;
+#define _mm256_cmpgt_epi(a, b) _mm256_cmpgt_epi16(a, b)
+#define _mm256_set1_epi(a) _mm256_set1_epi16(a)
+
+#elif KEY_SIZE == 32
+typedef int32_t key_t;
+#define _mm256_cmpgt_epi(a, b) _mm256_cmpgt_epi32(a, b)
+#define _mm256_set1_epi(a) _mm256_set1_epi32(a)
+
+#elif KEY_SIZE == 64
+typedef int64_t key_t;
+#define _mm256_cmpgt_epi(a, b) _mm256_cmpgt_epi64(a, b)
+#define _mm256_set1_epi(a) _mm256_set1_epi64x(a)
+
+#else
+#error KEY_SIZE has to be 8, 16, 32 or 64
+#endif
+
+#define ORDER 128
 
 typedef u_int64_t value_t;
-typedef u_int64_t key_t;
 
 typedef union leaf
 {
@@ -17,63 +52,117 @@ typedef struct node
 {
     key_t keys[ORDER - 1];
     leaf children[ORDER];
-
+    /** number of keys in node **/
     uint16_t n;
+    /** marks node as leaf **/
     bool is_leaf;
 } node;
 
-void node_init(node *n, bool is_leaf)
+node *node_create(bool is_leaf)
 {
+    node *n = (node *)aligned_alloc(32, (sizeof(node) + 31) / 32 * 32);
     n->n = 0;
     n->is_leaf = is_leaf;
+    return n;
 }
 
-uint16_t find_index(key_t keys[ORDER - 1], uint16_t n, key_t key)
+#if __AVX2__
+uint16_t find_index(key_t keys[ORDER - 1], int size, __m256i key)
 {
-    uint16_t i = 0;
-    while (i < n && key > keys[i])
+    int idx = 0;
+    int rv = 256 / KEY_SIZE;
+    int num_iter = (size + rv - 1) / rv;
+    __m256i b, cmp;
+    // number of values that fit into the register
+    int bb = KEY_SIZE / 8;
+
+    unsigned int g_mask;
+
+    // mask for last iteration (if register is only partially filled in last iteration)
+    int offset = size - (num_iter - 1) * rv;
+    uint32_t last_msk = (u_int32_t)(((u_int64_t)1 << ((offset * bb))) - 1);
+
+    int j = 0;
+    do
+    {
+        b = _mm256_load_si256((__m256i const *)(keys + j * rv));
+        cmp = _mm256_cmpgt_epi(key, b);
+        g_mask = _mm256_movemask_epi8(cmp);
+        if (j == num_iter - 1)
+            g_mask &= last_msk;
+        if (g_mask != -1)
+            break;
+        j++;
+    } while (j < num_iter);
+    idx = __builtin_ffs(~g_mask) / bb;
+    return idx + j * rv;
+}
+#else
+uint16_t find_index(key_t keys[ORDER - 1], int size, key_t key)
+{
+    int i = 0;
+    while (i < size && key > keys[i])
         i++;
     return i;
 }
+#endif
 
 value_t *node_get(node *n, key_t key)
 {
-    uint16_t i = find_index(n->keys, n->n, key);
-    bool eq = n->keys[i] == key;
-    if (n->is_leaf)
+#ifdef __AVX2__
+    __m256i cmp_key = _mm256_set1_epi(key);
+#else
+    key_t cmp_key = key;
+#endif
+    while (true)
     {
-        if (eq)
-            return &n->children[i].value;
+        uint16_t i = find_index(n->keys, n->n, cmp_key);
+        bool eq = n->keys[i] == key;
+        if (n->is_leaf)
+        {
+            if (eq)
+                return &n->children[i].value;
+            else
+                return NULL;
+        }
         else
-            return NULL;
-    }
-    else
-    {
-        if (eq)
-            return node_get(n->children[i + 1].next, key);
-        else
-            return node_get(n->children[i].next, key);
+        {
+            if (eq)
+                n = n->children[i + 1].next;
+            else
+                n = n->children[i].next;
+        }
     }
 }
 
+void node_insert(node *n, key_t key, value_t value);
+
 void node_split(node *n, uint16_t i, node *child)
 {
-    node *right = (node *)malloc(sizeof(node));
-    node_init(right, child->is_leaf);
+    node *right = node_create(child->is_leaf);
     int min_deg = ORDER / 2;
-    right->n = min_deg;
-    // y = child
-    // z = right
+    // is we split child split value has to be reinserted into right node
+    // k makes sure all new values in the node are moved one to the right
+    int k = child->is_leaf ? 1 : 0;
 
-    for (int j = 0; j < min_deg; j++)
+    right->n = min_deg - 1 + k;
+    if (k == 1)
     {
-        right->keys[j] = child->keys[j + min_deg - 1];
-        right->children[j] = child->children[j + min_deg - 1];
+        right->keys[0] = child->keys[min_deg - 1];
+        right->children[0].value = child->children[min_deg - 1].value;
+    }
+
+    for (int j = 0; j < right->n + 1; j++)
+    {
+        right->keys[j + k] = child->keys[j + min_deg];
+        right->children[j + k] = child->children[j + min_deg];
     }
 
     // if non leaf node also copy last one
     if (!child->is_leaf)
-        right->children[min_deg] = child->children[min_deg + min_deg - 1];
+    {
+        right->children[min_deg - 1 + k] = child->children[min_deg + min_deg - 1];
+    }
 
     // Reduce the number of keys in y
     child->n = min_deg - 1;
@@ -100,7 +189,12 @@ void node_split(node *n, uint16_t i, node *child)
 
 void node_insert(node *n, key_t key, value_t value)
 {
-    uint16_t i = find_index(n->keys, n->n, key);
+#ifdef __AVX2__
+    __m256i cmp_key = _mm256_set1_epi(key);
+#else
+    key_t cmp_key = key;
+#endif
+    uint16_t i = find_index(n->keys, n->n, cmp_key);
     bool eq = n->keys[i] == key;
     if (n->is_leaf)
     {
@@ -127,13 +221,24 @@ void node_insert(node *n, key_t key, value_t value)
             i++;
         if (n->children[i].next->n == ORDER - 1)
         {
-            // child node is full
             node_split(n, i, n->children[i].next);
             if (n->keys[i] < key)
                 i++;
         }
         node_insert(n->children[i].next, key, value);
     }
+}
+
+void node_free(node *n)
+{
+    if (!n->is_leaf)
+    {
+        for (int i = 0; i < n->n + 1; i++)
+        {
+            node_free(n->children[i].next);
+        }
+    }
+    free(n);
 }
 
 typedef struct bptree
@@ -148,14 +253,14 @@ void bptree_init(bptree *tree)
 
 value_t *bptree_get(bptree *tree, key_t key)
 {
-    if (tree->root == NULL)
+    if (__builtin_expect(tree->root == NULL, 0))
         return NULL;
     else
         return node_get(tree->root, key);
 }
 void bptree_insert(bptree *tree, key_t key, value_t value)
 {
-    if (tree->root == NULL)
+    if (__builtin_expect(tree->root == NULL, 0))
     {
         tree->root = (node *)malloc(sizeof(node));
         tree->root->keys[0] = key;
@@ -167,8 +272,7 @@ void bptree_insert(bptree *tree, key_t key, value_t value)
     {
         if (tree->root->n == ORDER - 1)
         {
-            node *s = (node *)malloc(sizeof(node));
-            node_init(s, false);
+            node *s = node_create(false);
             s->children[0].next = tree->root;
             node_split(s, 0, tree->root);
             int i = 0;
@@ -186,61 +290,13 @@ void bptree_insert(bptree *tree, key_t key, value_t value)
     }
 }
 
-void node_dot(node *n, FILE *fp)
+void bptree_free(bptree *tree)
 {
-    fprintf(fp, "\"node%lu\" [label = \"", (uintptr_t)n);
-    for (int i = 0; i < ORDER; i++)
-    {
-        fprintf(fp, "<f%d>", i);
-        if (i < n->n)
-        {
-            fprintf(fp, "%llu", n->keys[i]);
-            if (n->is_leaf)
-                fprintf(fp, "(%lld)", n->children[i].value);
-        }
-        if (i != ORDER - 1)
-        {
-            fprintf(fp, " | ");
-        }
-    }
-    fprintf(fp, "\" shape = \"record\"];\n");
-    if (!n->is_leaf)
-        for (int i = 0; i < n->n + 1; i++)
-        {
-            if (n->children[i].next != NULL)
-            {
-                node_dot(n->children[i].next, fp);
-                char orientation = i != n->n ? 'w' : 'e';
-                int src_idx = i != n->n ? i : i - 1;
-                fprintf(fp, "\"node%lu\":f%d:s%c -> \"node%lu\":n;", (uintptr_t)n, src_idx, orientation, (uintptr_t)n->children[i].next);
-            }
-            else
-            {
-                printf("ERROR: child %d of node [%llu,%llu,..] is null\n", i, n->keys[0], n->keys[1]);
-            }
-        }
-}
-
-void bptree_dot(bptree *tree, FILE *fp)
-{
-    fprintf(fp, "digraph g {\ngraph [ rankdir = \"TP\"];\n");
     if (tree->root != NULL)
-        node_dot(tree->root, fp);
-    fprintf(fp, "\n}");
+        node_free(tree->root);
 }
 
-void bptree_plot(bptree *tree, const char *filename)
-{
-    // print tree
-    FILE *fp = fopen(filename, "w");
-    if (fp == NULL)
-    {
-        printf("file can't be opened\n");
-        exit(1);
-    }
-    bptree_dot(tree, fp);
-    fclose(fp);
-}
+#include "plot.h"
 
 int main(int argc, char *argv[])
 {
@@ -257,19 +313,21 @@ int main(int argc, char *argv[])
     }
     bptree tree;
     bptree_init(&tree);
-    char fn[50];
+    srand(0);
     for (int i = 0; i < tests; i++)
     {
-        bptree_insert(&tree, i, i);
-        sprintf(fn, "trees/tree_%d.dot", i);
-        bptree_plot(&tree, fn);
+        key_t x = rand();
+        bptree_insert(&tree, x, x);
     }
+    srand(0);
     for (int i = 0; i < tests; i++)
     {
-        value_t *v = bptree_get(&tree, i);
-        if (v == NULL || *v != i)
+        key_t x = rand();
+        value_t *v = bptree_get(&tree, x);
+        if (v == NULL || *v != x)
         {
-            printf("ERROR: %d != %llu\n", i, v != NULL ? *v : -1);
+            printf("ERROR: %lld != %llu\n", x, v != NULL ? *v : -1);
         }
     }
+    bptree_free(&tree);
 }
