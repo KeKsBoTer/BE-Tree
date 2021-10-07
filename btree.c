@@ -10,25 +10,21 @@
 #include "MurmurHash3/MurmurHash3.h"
 #include "bitmap.h"
 
-#define HASH_KEY
-
 #define memcpy_sized(dst, src, n) memcpy(dst, src, (n) * sizeof(*(dst)))
 #define memmove_sized(dst, src, n) memmove(dst, src, (n) * sizeof(*(dst)))
 #define memset_sized(dst, value, n) memset(dst, value, (n) * sizeof(*(dst)))
 
 node *node_create(int min_deg, bool is_leaf)
 {
-    int node_size = sizeof(node);
-    // rounding up to multiple of 32 bits to ensure 32-bit alignment for keys
-    node_size = (node_size + 31) / 32 * 32;
-    int order = 2 * min_deg; // order of the tree
-    int keys_size = (order - 1) * sizeof(partial_key);
-    int values_size = (order - 1) * sizeof(node_value);
-    int children_size = order * sizeof(node **);
-    int total_size = node_size + keys_size + values_size + children_size;
+    size_t node_size = sizeof(node);
+    size_t order = 2 * min_deg; // order of the tree
+    size_t keys_size = (order - 1) * sizeof(partial_key);
+    size_t values_size = (order - 1) * sizeof(node_value);
+    size_t children_size = order * sizeof(node **);
+    size_t total_size = node_size + keys_size + values_size + children_size;
 
     // allocate all memory in one block and align with 32 bits to ensure
-    // keys have 32 bits alignment for simd operations
+    // keys have 32 bits aslignment for simd operations
     uint8_t *buffer = (uint8_t *)aligned_alloc(32, (total_size + 31) / 32 * 32);
     node *n = (node *)buffer;
     n->min_deg = min_deg;
@@ -41,53 +37,59 @@ node *node_create(int min_deg, bool is_leaf)
     return n;
 }
 
-unsigned int find_index(partial_key *keys, int size, partial_key key)
-{
 #if __AVX2__
-    int key_size = sizeof(key) * 8;
-
+unsigned int find_index(partial_key *keys, int size, __m256i key)
+{
     int idx = 0;
-    int num_iter = (size + key_size - 1) / key_size;
-    __m256i a = _mm256_set1_epi(key);
+    int rv = 256 / KEY_SIZE;
+    int num_iter = (size + rv - 1) / rv;
+    // __m256i msk = _mm256_set1_epi16(INT16_MAX);
     __m256i b, cmp;
-    // number of bits per register in the result
-    // see _mm256_movemask_epi8 documentation
-    int bb = key_size / 8;
     // number of values that fit into the register
-    int rv = 256 / key_size;
+    int bb = KEY_SIZE / 8;
 
+#ifdef COUNT_REGISTER_FILL
+    find_index_cnt += num_iter;
+    find_index_fill += size;
+#endif
+    int offset;
     for (int j = 0; j < num_iter; j++)
     {
         b = _mm256_load_si256((__m256i const *)(keys + j * rv));
-        cmp = _mm256_cmpgt_epi(a, b);
-        unsigned int g_mask = _mm256_movemask_epi8(cmp);
-        int offset = (j + 1) * rv > size ? size - (j * rv) : rv;
-        unsigned int bit_mask = ~((unsigned int)0) >> (32 - offset * bb);
-        // get index of first larger key in current window
-        int ab = _lzcnt_u32(g_mask & bit_mask);
-        int x = rv - ab / bb;
+        cmp = _mm256_cmpgt_epi(key, b);
+        offset = (j + 1) * rv > size ? size - (j * rv) : rv;
+        unsigned int g_mask = _mm256_movemask_epi8(cmp) & ((1 << ((offset * bb) - 1)) - 1);
+        int x = __builtin_ffs(~g_mask) / bb;
         idx += x;
         if (x < rv)
             break;
     }
     return idx;
+}
 #else
+unsigned int find_index(partial_key *keys, int size, partial_key key)
+{
     int i = 0;
     while (i < size && key > keys[i])
         i++;
     return i;
-#endif
 }
+
+#endif
 
 i_value *node_get(node *n, partial_key *keys, int num_keys)
 {
+#ifdef __AVX2__
+    __m256i key = _mm256_set1_epi(keys[0]);
+#else
     partial_key key = keys[0];
+#endif
     while (true)
     {
         unsigned int i = find_index(n->keys, n->num_keys, key);
 
         // If the found key is equal to k, return this node
-        if (n->keys[i] == key && i < n->num_keys)
+        if (n->keys[i] == keys[0] && i < n->num_keys)
         {
             if (get_bit(&n->tree_end, i) == 0)
             {
@@ -167,13 +169,17 @@ void node_split_child(node *n, int i, node *y)
 
 void node_insert_non_full(node *n, partial_key *keys, int num_keys, i_value value, btree_key_hash full_key)
 {
+#if __AVX2__
+    __m256i key = _mm256_set1_epi(keys[0]);
+#else
     partial_key key = keys[0];
+#endif
     while (true)
     {
         // Initialize index as index of rightmost element
         int i = find_index(n->keys, n->num_keys, key);
 
-        if (n->keys[i] == key && i < n->num_keys)
+        if (n->keys[i] == keys[0] && i < n->num_keys)
         {
             if (get_bit(&n->tree_end, i) == 0)
             {
@@ -187,14 +193,22 @@ void node_insert_non_full(node *n, partial_key *keys, int num_keys, i_value valu
                     // TODO this can be done more efficient
                     btree *subtree = (btree *)malloc(sizeof(btree));
                     btree_init(subtree, n->min_deg);
-                    // insert current value into new subtree
+
+                    subtree->root = node_create(n->min_deg, true);
+
                     partial_key *p_keys = (partial_key *)&n->values[i].pair.key;
-                    int full_key_size = sizeof(btree_key_hash) / sizeof(partial_key);
-                    btree_insert_partial(subtree, p_keys + (full_key_size - (num_keys - 1)), num_keys - 1, n->values[i].pair.value, n->values[i].pair.key);
+                    uint64_t full_key_size = sizeof(btree_key_hash) / sizeof(partial_key);
+                    partial_key current_key = *(p_keys + (full_key_size - (num_keys - 1)));
+                    subtree->root->keys[0] = current_key;
+                    subtree->root->values[0].pair = n->values[i].pair;
+                    subtree->root->num_keys = 1;
 
                     btree_insert_partial(subtree, keys + 1, num_keys - 1, value, full_key);
+
                     n->values[i].next = subtree;
                     set_bit(&n->tree_end, i);
+
+                    //printf("WTF!\n");
                 }
             }
             else
@@ -216,7 +230,7 @@ void node_insert_non_full(node *n, partial_key *keys, int num_keys, i_value valu
             shift_one_left(&n->tree_end, i);
 
             // Insert the new key at found location
-            n->keys[i] = key;
+            n->keys[i] = keys[0];
             n->values[i].pair.key = full_key;
             n->values[i].pair.value = value;
             n->num_keys++;
@@ -234,10 +248,10 @@ void node_insert_non_full(node *n, partial_key *keys, int num_keys, i_value valu
             // After split, the middle key of n->children[i] goes up and
             // n->children[i] is splitted into two.  See which of the two
             // is going to have the new key
-            if (n->keys[i] < key)
+            if (n->keys[i] < keys[0])
                 i++;
 
-            if (n->keys[i] == key)
+            if (n->keys[i] == keys[0])
                 // in rare cases we make a unecessary splits
                 // in this cases we need to retry the insertion for the current node
                 // this happens for about 0,0025% of all insertions
@@ -357,9 +371,9 @@ void btree_free(btree *tree)
 
 btree_key_hash hash_key(btree_key key)
 {
-#ifdef HASH_EKY
+#ifdef HASH_KEY
     uint64_t hashed_key[2];
-    //MurmurHash3_x64_128(&key, sizeof(btree_key), 42, &hashed_key);
+    MurmurHash3_x64_128(&key, sizeof(btree_key), 42, &hashed_key);
     // truncate hash to 64 bit
     // this is the way, according to https://security.stackexchange.com/questions/97377/secure-way-to-shorten-a-hash
     return hashed_key[0];

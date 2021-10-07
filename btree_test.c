@@ -18,7 +18,7 @@ void node_dot(node *n, FILE *fp)
         if (i < n->num_keys)
         {
             fprintf(fp, "%d", n->keys[i]);
-            fprintf(fp, "(%d)", n->values[i].pair.value);
+            fprintf(fp, "(%lld)", n->values[i].pair.value);
         }
         if (i != n->min_deg * 2 - 1)
         {
@@ -77,8 +77,9 @@ int main(int argc, char *argv[])
             exit(1);
         }
     }
+    srand(0);
     btree tree;
-    int order = 256 / (sizeof(partial_key) * 8) + 1;
+    int order = 48 * 256 / (sizeof(partial_key) * 8) + 1;
     btree_init(&tree, order / 2);
     printf("inserting %d pairs...\n", test_values);
 #ifdef SAVE_TREES
@@ -86,7 +87,8 @@ int main(int argc, char *argv[])
 #endif
     for (int i = 0; i < test_values; i++)
     {
-        int x = i;
+        i_value x = rand() - RAND_MAX / 2;
+
         btree_insert(&tree, x, x);
         if (i % (test_values / 10) == 0)
         {
@@ -102,20 +104,27 @@ int main(int argc, char *argv[])
 #endif
     printf("done!\n");
 
+    srand(0);
+
     printf("testing...\n");
     i_value *v;
     for (int i = 0; i < test_values; i++)
     {
-        int x = i;
+        i_value x = rand() - RAND_MAX / 2;
+
         v = btree_get(&tree, x);
         if (i % (test_values / 10) == 0)
         {
             printf("progress: %d%%\n", (int)(100 * ((float)i) / test_values));
         }
         if (v == NULL || *v != x)
-            printf("ERROR: %d: %d\n", x, v == NULL ? -1 : *v);
+            printf("ERROR: %lld: %lld\n", x, v == NULL ? -1 : *v);
     }
     btree_free(&tree);
     printf("done!\n");
+
+#ifdef COUNT_REGISTER_FILL
+    printf("register fill: %f (%llu, %llu)\n", 100 * ((float)find_index_fill) / (find_index_cnt * KEY_SIZE), find_index_fill, find_index_cnt);
+#endif
     return 0;
 }

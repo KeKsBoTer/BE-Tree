@@ -4,10 +4,13 @@
 #include <stdlib.h>
 #include <x86intrin.h>
 
+// use hash
+//#define HASH_KEY
+
 /**
  * @brief size of the keys in the binary tree in bits
  */
-#define KEY_SIZE 16
+#define KEY_SIZE 64
 
 // define macros for the AVX functions based on the KEY_SIZE
 
@@ -38,7 +41,7 @@ typedef int64_t partial_key;
 /**
  * @brief type of the values with the btree
  */
-typedef int i_value;
+typedef int64_t i_value;
 
 typedef int64_t btree_key;
 typedef int64_t btree_key_hash;
@@ -73,7 +76,7 @@ typedef struct node
     bool leaf;
     /** bitmap that says if a value is a pointer to a value or another tree **/
     uint64_t tree_end;
-} node;
+} __attribute__((aligned(32))) node;
 
 /**
  * @brief create a node struct together with keys, values and children array
@@ -85,6 +88,11 @@ typedef struct node
  */
 node *node_create(int min_deg, bool is_leaf);
 
+//#define COUNT_REGISTER_FILL
+#ifdef COUNT_REGISTER_FILL
+uint64_t find_index_cnt;
+uint64_t find_index_fill;
+#endif
 /**
  * @brief finds index of key within a list. 
  * Uses SIMD instructions if they are enabled during compile time
@@ -94,7 +102,11 @@ node *node_create(int min_deg, bool is_leaf);
  * @param key key to search for
  * @return unsigned int location of key within keys array
  */
+#if __AVX2__
+unsigned int find_index(partial_key *keys, int size, __m256i key);
+#else
 unsigned int find_index(partial_key *keys, int size, partial_key key);
+#endif
 
 i_value *node_get(node *n, partial_key *keys, int num_keys);
 void node_split_child(node *n, int i, node *y);
