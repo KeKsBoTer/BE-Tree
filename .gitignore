@@ -3,4 +3,4 @@
 *.dot
 *.asm
 *.o
-btree_test
+bptree_test

@@ -1,7 +1,7 @@
 CC = gcc 
 CFLAGS =  -Wall -m64 -mavx2
 LDFLAGS = -lpthread -lm
-TARGS = main 
+TARGS = bptree_test 
 
 ifeq ($(mode), debug)
 CFLAGS += -g
@@ -11,8 +11,8 @@ endif
 
 all: $(TARGS)
 
-main:  main.c
-	$(CC) $(CFLAGS) $< -o main  $(LDFLAGS)
+bptree_test: bptree.h bptree.c bptree_test.c
+	$(CC) $(CFLAGS) bptree_test.c bptree.c -o bptree_test  $(LDFLAGS)
 
 clean:
 	rm -f *.o main *.asm 

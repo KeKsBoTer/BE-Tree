@@ -7,7 +7,7 @@ void node_dot(node *n, FILE *fp)
         fprintf(fp, "<f%d>", i);
         if (i < n->n)
         {
-            fprintf(fp, "%llu", n->keys[i]);
+            fprintf(fp, "%d", n->keys[i]);
             if (n->is_leaf)
                 fprintf(fp, "(%lld)", n->children[i].value);
         }
@@ -20,17 +20,10 @@ void node_dot(node *n, FILE *fp)
     if (!n->is_leaf)
         for (int i = 0; i < n->n + 1; i++)
         {
-            if (n->children[i].next != NULL)
-            {
-                node_dot(n->children[i].next, fp);
-                char orientation = i != n->n ? 'w' : 'e';
-                int src_idx = i != n->n ? i : i - 1;
-                fprintf(fp, "\"node%lx\":f%d:s%c -> \"node%lx\":n;", (uintptr_t)n, src_idx, orientation, (uintptr_t)n->children[i].next);
-            }
-            else
-            {
-                printf("ERROR: child %d of node [%llu,%llu,..] is null\n", i, n->keys[0], n->keys[1]);
-            }
+            node_dot(n->children[i].next, fp);
+            char orientation = i != n->n ? 'w' : 'e';
+            int src_idx = i != n->n ? i : i - 1;
+            fprintf(fp, "\"node%lx\":f%d:s%c -> \"node%lx\":n;", (uintptr_t)n, src_idx, orientation, (uintptr_t)n->children[i].next);
         }
 }
 
