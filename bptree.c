@@ -1,3 +1,4 @@
+#include <string.h>
 #include "bptree.h"
 
 node *node_create(bool is_leaf)
@@ -5,39 +6,27 @@ node *node_create(bool is_leaf)
     node *n = (node *)aligned_alloc(32, (sizeof(node) + 31) / 32 * 32);
     n->n = 0;
     n->is_leaf = is_leaf;
+    for (int i = 0; i < ORDER - 1; i++)
+        n->keys[i] = KEY_T_MAX;
     return n;
 }
 
 #if __AVX2__
+
+uint64_t cmp(__m256i x_vec, key_t *y_ptr)
+{
+    __m256i y_vec = _mm256_load_si256((__m256i *)y_ptr);
+    __m256i mask = _mm256_cmpgt_epi(x_vec, y_vec);
+    return _mm256_movemask((__m256)mask);
+}
+
 uint16_t find_index(key_t keys[ORDER - 1], int size, __m256i key)
 {
-    int idx = 0;
-    int rv = 256 / KEY_SIZE;
-    int num_iter = (size + rv - 1) / rv;
-    __m256i b, cmp;
-    // number of values that fit into the register
-    int bb = KEY_SIZE / 8;
-
-    unsigned int g_mask;
-
-    // mask for last iteration (if register is only partially filled in last iteration)
-    int offset = size - (num_iter - 1) * rv;
-    uint32_t last_msk = (u_int32_t)(((u_int64_t)1 << ((offset * bb))) - 1);
-
-    int j = 0;
-    do
-    {
-        b = _mm256_load_si256((__m256i const *)(keys + j * rv));
-        cmp = _mm256_cmpgt_epi(key, b);
-        g_mask = _mm256_movemask_epi8(cmp);
-        if (j == num_iter - 1)
-            g_mask &= last_msk;
-        if (g_mask != -1)
-            break;
-        j++;
-    } while (j < num_iter);
-    idx = __builtin_ffs(~g_mask) / bb;
-    return idx + j * rv;
+    uint64_t mask = cmp(key, keys);
+    if (size > REG_VALUES)
+        mask += (cmp(key, &keys[REG_VALUES]) << REG_VALUES);
+    int i = __builtin_ffs(~mask) - 1;
+    return i;
 }
 #else
 uint16_t find_index(key_t keys[ORDER - 1], int size, key_t key)
@@ -80,19 +69,19 @@ value_t *node_get(node *n, key_t key)
 void node_split(node *n, uint16_t i, node *child)
 {
     node *right = node_create(child->is_leaf);
-    int min_deg = ORDER / 2;
+    int min_deg = (ORDER + ORDER % 2) / 2;
     // is we split child split value has to be reinserted into right node
     // k makes sure all new values in the node are moved one to the right
     int k = child->is_leaf ? 1 : 0;
 
-    right->n = min_deg - 1 + k;
+    right->n = (ORDER - min_deg - 1) + k;
     if (k == 1)
     {
         right->keys[0] = child->keys[min_deg - 1];
         right->children[0].value = child->children[min_deg - 1].value;
     }
 
-    for (int j = 0; j < right->n + 1; j++)
+    for (int j = 0; j < right->n - k; j++)
     {
         right->keys[j + k] = child->keys[j + min_deg];
         right->children[j + k] = child->children[j + min_deg];
@@ -101,7 +90,7 @@ void node_split(node *n, uint16_t i, node *child)
     // if non leaf node also copy last one
     if (!child->is_leaf)
     {
-        right->children[min_deg - 1 + k] = child->children[min_deg + min_deg - 1];
+        right->children[right->n] = child->children[ORDER - 1];
     }
 
     // Reduce the number of keys in y
@@ -197,10 +186,9 @@ void bptree_insert(bptree *tree, key_t key, value_t value)
 {
     if (__builtin_expect(tree->root == NULL, 0))
     {
-        tree->root = (node *)malloc(sizeof(node));
+        tree->root = node_create(true);
         tree->root->keys[0] = key;
         tree->root->children[0].value = value;
-        tree->root->is_leaf = true;
         tree->root->n = 1;
     }
     else

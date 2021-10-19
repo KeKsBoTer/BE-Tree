@@ -6,40 +6,52 @@
 
 #define memcpy_sized(dst, src, n) memcpy(dst, src, (n) * sizeof(*(dst)))
 #define memmove_sized(dst, src, n) memmove(dst, src, (n) * sizeof(*(dst)))
-#define memset_sized(dst, value, n) memset(dst, value, (n) * sizeof(*(dst)))
+
+#define SIMD_REGISTER_SIZE 256
+#define DCACHE_LINESIZE 512
 
 /**
  * @brief size of the keys in the binary tree in bits
  */
 #define KEY_SIZE 32
 
+#define REG_VALUES ((SIMD_REGISTER_SIZE) / (KEY_SIZE))
+
 // define macros for the AVX functions based on the KEY_SIZE
 
 #if KEY_SIZE == 8
 typedef int8_t key_t;
+#define KEY_T_MAX INT8_MAX
 #define _mm256_cmpgt_epi(a, b) _mm256_cmpgt_epi8(a, b)
 #define _mm256_set1_epi(a) _mm256_set1_epi8(a)
+#define _mm256_movemask(a) _mm256_movemask_epi8(a)
 
 #elif KEY_SIZE == 16
 typedef int16_t key_t;
+#define KEY_T_MAX INT16_MAX
 #define _mm256_cmpgt_epi(a, b) _mm256_cmpgt_epi16(a, b)
 #define _mm256_set1_epi(a) _mm256_set1_epi16(a)
+// #define _mm256_movemask(a) _mm256_movemask_epi8(a) TODO find workaround
 
 #elif KEY_SIZE == 32
 typedef int32_t key_t;
+#define KEY_T_MAX INT32_MAX
 #define _mm256_cmpgt_epi(a, b) _mm256_cmpgt_epi32(a, b)
 #define _mm256_set1_epi(a) _mm256_set1_epi32(a)
+#define _mm256_movemask(a) _mm256_movemask_ps(a)
 
 #elif KEY_SIZE == 64
 typedef int64_t key_t;
+#define KEY_T_MAX INT64_MAX
 #define _mm256_cmpgt_epi(a, b) _mm256_cmpgt_epi64(a, b)
 #define _mm256_set1_epi(a) _mm256_set1_epi64x(a)
+#define _mm256_movemask(a) _mm256_movemask_pd(a)
 
 #else
 #error KEY_SIZE has to be 8, 16, 32 or 64
 #endif
 
-#define ORDER (16)
+#define ORDER (DCACHE_LINESIZE / KEY_SIZE + 1)
 
 typedef u_int64_t value_t;
 

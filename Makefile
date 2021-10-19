@@ -15,7 +15,7 @@ bptree_test: bptree.h bptree.c bptree_test.c
 	$(CC) $(CFLAGS) bptree_test.c bptree.c -o bptree_test  $(LDFLAGS)
 
 clean:
-	rm -f *.o main *.asm 
+	rm -f *.o bptree_test *.asm 
 
 clean_trees:
-	rm -f trees/*.dot
+	rm -f trees/*.dot 

@@ -2,7 +2,7 @@
 void node_dot(node *n, FILE *fp)
 {
     fprintf(fp, "\"node%lx\" [label = \"", (uintptr_t)n);
-    for (int i = 0; i < ORDER; i++)
+    for (int i = 0; i <= ORDER; i++)
     {
         fprintf(fp, "<f%d>", i);
         if (i < n->n)
