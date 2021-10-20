@@ -13,7 +13,7 @@ node *node_create(bool is_leaf)
 
 #if __AVX2__
 
-uint64_t cmp(__m256i x_vec, key_t *y_ptr)
+inline uint64_t cmp(__m256i x_vec, key_t *y_ptr)
 {
     __m256i y_vec = _mm256_load_si256((__m256i *)y_ptr);
     __m256i mask = _mm256_cmpgt_epi(x_vec, y_vec);
@@ -23,8 +23,9 @@ uint64_t cmp(__m256i x_vec, key_t *y_ptr)
 uint16_t find_index(key_t keys[ORDER - 1], int size, __m256i key)
 {
     uint64_t mask = cmp(key, keys);
+    // TODO check if conditional is faster / slower
     if (size > REG_VALUES)
-        mask += (cmp(key, &keys[REG_VALUES]) << REG_VALUES);
+        mask += cmp(key, &keys[REG_VALUES]) << REG_VALUES;
     int i = __builtin_ffs(~mask) - 1;
     return i;
 }
