@@ -35,7 +35,8 @@ typedef int16_t key_t;
 #define KEY_T_MAX INT16_MAX
 #define _mm256_cmpgt_epi(a, b) _mm256_cmpgt_epi16(a, b)
 #define _mm256_set1_epi(a) _mm256_set1_epi16(a)
-// #define _mm256_movemask(a) _mm256_movemask_epi8(a) TODO find workaround
+// workaround for 16 bit. Use 8 bit extraction and only use every second value
+#define _mm256_movemask(a) _pext_u32(_mm256_movemask_epi8(a), 0xAAAAAAAA) // 0xA = 0b1010
 
 #elif KEY_SIZE == 32
 typedef int32_t key_t;
@@ -59,20 +60,15 @@ typedef int64_t key_t;
 
 typedef u_int64_t value_t;
 
-typedef struct value_pool
-{
-    int n;
-    int i;
-    int num_pages;
-    int values_per_page;
-    value_t **pages;
-} value_pool;
+#include "mem_pool.h"
 
-void value_pool_init(value_pool *pool);
-
-void value_pool_free(value_pool *pool);
-
-value_t *value_pool_alloc(value_pool *pool);
+#ifdef __AVX2__
+#define key_cmp_t __m256i
+#define avx_broadcast(a) _mm256_set1_epi(a)
+#else
+#define key_cmp_t key_t
+#define avx_broadcast(a) (a)
+#endif
 
 typedef union child_group
 {
@@ -84,11 +80,11 @@ typedef struct node
 {
     key_t keys[ORDER - 1];
     child_group children;
+    pthread_spinlock_t write_lock;
     /** number of keys in node **/
     uint16_t n;
     /** marks node as leaf **/
     bool is_leaf;
-    pthread_spinlock_t write_lock;
 
 } __attribute__((aligned(32))) node;
 
@@ -103,13 +99,14 @@ value_t *node_get(node *n, key_t key);
 
 void node_split(node *n, uint16_t i, node *child, value_pool *pool);
 
-void node_insert(node *n, key_t key, value_t value, value_pool *pool, node **node_group, bool is_root);
+void node_insert(node *n, key_t key, value_t value, value_pool *pool, node **node_group, pthread_spinlock_t *root_lock, bool is_root);
 
 void node_free(node *n, value_pool *pool);
 typedef struct bptree
 {
     node *root;
     value_pool pool;
+    pthread_spinlock_t write_lock;
 } bptree;
 
 void bptree_init(bptree *tree);

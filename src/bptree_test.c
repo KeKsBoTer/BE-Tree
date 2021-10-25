@@ -1,6 +1,6 @@
 #include "bptree.h"
 #include "plot.h"
-#include "StopWatch.h"
+#include "stop_watch.h"
 
 int main(int argc, char *argv[])
 {

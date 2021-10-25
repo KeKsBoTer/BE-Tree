@@ -1,44 +1,7 @@
 #include "bptree.h"
 
-void value_pool_grow(value_pool *pool)
-{
-    pool->num_pages++;
-    pool->pages = realloc(pool->pages, sizeof(value_t *) * pool->num_pages);
-    pool->pages[pool->num_pages - 1] = malloc(sizeof(value_t[ORDER - 1]) * pool->values_per_page);
-    pool->n = pool->num_pages * pool->values_per_page;
-    pool->i = 0;
-}
-
-void value_pool_init(value_pool *pool)
-{
-    pool->num_pages = 0;
-    pool->values_per_page = sysconf(_SC_PAGESIZE) / sizeof(value_t[ORDER - 1]);
-    value_pool_grow(pool);
-}
-
-void value_pool_free(value_pool *pool)
-{
-    for (int i = 0; i < pool->num_pages; i++)
-        free(pool->pages[i]);
-    free(pool->pages);
-}
-
-value_t *value_pool_alloc(value_pool *pool)
-{
-    if (pool->i == pool->values_per_page)
-    {
-        value_pool_grow(pool);
-    }
-
-    value_t *last_page = pool->pages[pool->num_pages - 1];
-    value_t *v = last_page + pool->i * (ORDER - 1);
-    pool->i++;
-    return v;
-}
-
 void node_init(node *n, bool is_leaf, value_pool *pool)
 {
-
     n->n = 0;
     n->is_leaf = is_leaf;
     // set all keys to max value as default to avoid masking when compare with AVX
@@ -86,11 +49,8 @@ uint16_t find_index(key_t keys[ORDER - 1], int size, key_t key)
 
 value_t *node_get(node *n, key_t key)
 {
-#ifdef __AVX2__
-    __m256i cmp_key = _mm256_set1_epi(key);
-#else
-    key_t cmp_key = key;
-#endif
+    // convert to avx value if supported
+    key_cmp_t cmp_key = avx_broadcast(key);
     while (true)
     {
         uint16_t i = find_index(n->keys, n->n, cmp_key);
@@ -130,14 +90,9 @@ void node_split(node *n, uint16_t i, node *child, value_pool *pool)
     right->n = (ORDER - min_deg - 1) + k;
     // copy vales (leaf node) or child nodes
     if (child->is_leaf)
-    {
         memcpy_sized(right->children.values, child->children.values + min_deg - 1, right->n);
-    }
     else
-    {
-        // TODO i think these children also need to be cloned
-        memcpy_sized(right->children.next + k, child->children.next + min_deg, right->n + 1);
-    }
+        memcpy_sized(right->children.next, child->children.next + min_deg, right->n + 1);
 
     // move keys to new right node
     memcpy_sized(right->keys, child->keys + min_deg - k, right->n + k);
@@ -160,19 +115,11 @@ node *node_clone_group(node *group)
     return clone;
 }
 
-void node_insert(node *n, key_t key, value_t value, value_pool *pool, node **node_group, bool is_root)
+void node_insert_no_clone(node *n, key_cmp_t cmp_key, value_t value, value_pool *pool)
 {
-
-#ifdef __AVX2__
-    __m256i cmp_key = _mm256_set1_epi(key);
-#else
-    key_t cmp_key = key;
-#endif
-
+    key_t key = *((key_t *)(&cmp_key));
     while (true)
     {
-        pthread_spinlock_t *node_lock = &n->write_lock;
-        pthread_spin_lock(node_lock);
         uint16_t i = find_index(n->keys, n->n, cmp_key);
         bool eq = n->keys[i] == key;
         if (n->is_leaf)
@@ -180,18 +127,66 @@ void node_insert(node *n, key_t key, value_t value, value_pool *pool, node **nod
             if (eq)
             {
                 n->children.values[i] = value;
-                pthread_spin_unlock(node_lock);
+            }
+            else
+            {
+                // shift values to right an insert
+                memmove_sized(n->keys + i + 1, n->keys + i, n->n - i);
+                // TODO values are currently not a copy but the original ones
+                memmove_sized(n->children.values + i + 1, n->children.values + i, (n->n - i));
+                n->keys[i] = key;
+                n->children.values[i] = value;
+                n->n++;
+            }
+            return;
+        }
+        else
+        {
+            if (eq)
+                i++;
+            if (n->children.next[i].n == ORDER - 1)
+            {
+                node *to_split = &(n->children.next[i]);
+                node_split(n, i, to_split, pool);
+
+                // update number of elements in node that was just split
+                int min_deg = (ORDER + ORDER % 2) / 2;
+                to_split->n = min_deg - 1;
+
+                if (n->keys[i] < key)
+                    i++;
+            }
+            n = &(n->children.next[i]);
+        }
+    }
+}
+
+void node_insert(node *n, key_t key, value_t value, value_pool *pool, node **node_group, pthread_spinlock_t *write_lock, bool is_root)
+{
+    // convert to avx value if supported
+    key_cmp_t cmp_key = avx_broadcast(key);
+
+    while (true)
+    {
+        uint16_t i = find_index(n->keys, n->n, cmp_key);
+        bool eq = n->keys[i] == key;
+        if (n->is_leaf)
+        {
+            if (eq)
+            {
+                n->children.values[i] = value;
             }
             else
             {
                 node *clone;
                 if (!is_root)
                 {
-                    // perform insert on clone
+                    // clone entire node group and perform insertion on this clone
                     clone = node_clone_group(*node_group);
                 }
                 else
                 {
+                    // we are in root so only clone current node
                     clone = aligned_alloc(32, sizeof(node));
                     memcpy_sized(clone, n, 1);
                 }
@@ -207,9 +202,12 @@ void node_insert(node *n, key_t key, value_t value, value_pool *pool, node **nod
                 // change pointer to clone and free old one
                 node *old_group = *node_group;
                 *node_group = clone;
-                pthread_spin_unlock(node_lock);
+
+                // TODO this free can lead to other threads reading from freed memory
+                // FIX  manual garbage collection thread
                 free(old_group);
             }
+            pthread_spin_unlock(write_lock);
             return;
         }
         else
@@ -233,23 +231,28 @@ void node_insert(node *n, key_t key, value_t value, value_pool *pool, node **nod
                 if (n_clone->keys[i] < key)
                     i++;
 
+                node_insert_no_clone(&(n_clone->children.next[i]), cmp_key, value, pool);
+
                 node *old_group = *node_group;
                 node *old_children = n->children.next;
                 *node_group = n_group_clone;
                 n = n_clone;
-                pthread_spin_unlock(node_lock);
+
+                // TODO this free can lead to other threads reading from freed memory
+                // FIX  manual garbage collection thread
                 free(old_group);
                 free(old_children);
-                // TODO after a split we insert in the next iteration
-                // this leads to another clone beeing created
-                // one could do the insertion here on the clone directly
+                pthread_spin_unlock(write_lock);
+                return;
             }
-            else
-            {
-                pthread_spin_unlock(node_lock);
-            }
+            // done inserting in the child, release the lock
+            pthread_spin_unlock(write_lock);
 
-            // insert in child next iteration
+            // require lock for children since they are accessed next
+            write_lock = &n->write_lock;
+            pthread_spin_lock(write_lock);
+
+            // insert in child in next iteration (tail recursion)
             node_group = &n->children.next;
             n = &(n->children.next[i]);
             is_root = false;
@@ -271,7 +274,8 @@ void node_free(node *n, value_pool *pool)
 void bptree_init(bptree *tree)
 {
     tree->root = NULL;
-    value_pool_init(&tree->pool);
+    value_pool_init(&tree->pool, ORDER - 1);
+    pthread_spin_init(&tree->write_lock, 0);
 }
 
 value_t *bptree_get(bptree *tree, key_t key)
@@ -284,6 +288,7 @@ value_t *bptree_get(bptree *tree, key_t key)
 
 void bptree_insert(bptree *tree, key_t key, value_t value)
 {
+    pthread_spin_lock(&tree->write_lock);
     if (__builtin_expect(tree->root == NULL, 0))
     {
         node *root = aligned_alloc(32, sizeof(node));
@@ -291,17 +296,11 @@ void bptree_insert(bptree *tree, key_t key, value_t value)
         root->keys[0] = key;
         root->children.values[0] = value;
         root->n = 1;
-        if (!__sync_bool_compare_and_swap(&tree->root, NULL, root))
-        {
-            // if  another thread created the root node in the mean time restart
-            free(root);
-            bptree_insert(tree, key, value);
-        }
+        tree->root = root;
+        pthread_spin_unlock(&tree->write_lock);
     }
     else
     {
-        pthread_spinlock_t *root_lock = &tree->root->write_lock;
-        pthread_spin_lock(root_lock);
         if (tree->root->n == ORDER - 1)
         {
             node *s = aligned_alloc(32, sizeof(node));
@@ -310,6 +309,7 @@ void bptree_insert(bptree *tree, key_t key, value_t value)
             node_split(s, 0, tree->root, &tree->pool);
 
             s->children.next[0] = *tree->root;
+            s->children.next[0].write_lock = 0;
 
             // Reduce the number of keys in old root element
             int min_deg = (ORDER + ORDER % 2) / 2;
@@ -318,18 +318,19 @@ void bptree_insert(bptree *tree, key_t key, value_t value)
             int i = 0;
             if (s->keys[0] < key)
                 i++;
-            node_insert(&(s->children.next[i]), key, value, &tree->pool, &s->children.next, false);
+            node_insert(&(s->children.next[i]), key, value, &tree->pool, &s->children.next, &s->write_lock, false);
             node *old_root = tree->root;
             // Change root
             tree->root = s;
 
-            pthread_spin_unlock(root_lock);
             free(old_root);
+            pthread_spin_unlock(&tree->write_lock);
         }
         else
         {
-            pthread_spin_unlock(root_lock);
-            node_insert(tree->root, key, value, &tree->pool, &tree->root, true);
+            // IMPORTANT: as you (hello future simon) can maybe see, the unlock for the
+            // bptree write lock is missing. The unlock happens within the node_insert method.
+            node_insert(tree->root, key, value, &tree->pool, &tree->root, &tree->write_lock, true);
         }
     }
 }
@@ -343,4 +344,5 @@ void bptree_free(bptree *tree)
         value_pool_free(&tree->pool);
         free(tree->root);
     }
+    pthread_spin_destroy(&tree->write_lock);
 }
