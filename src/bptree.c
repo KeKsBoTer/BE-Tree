@@ -110,6 +110,12 @@ void node_split(node *n, uint16_t i, node *child)
     n->n++;
 }
 
+/**
+ * @brief clones a a node group by copying its values
+ * 
+ * @param group poiter to group with ORDER nodes
+ * @return node* pointer to clone
+ */
 node *node_clone_group(node *group)
 {
     node *clone = aligned_alloc(32, sizeof(node) * ORDER);
@@ -134,7 +140,6 @@ void node_insert_no_clone(node *n, key_cmp_t cmp_key, value_t value)
             {
                 // shift values to right an insert
                 memmove_sized(n->keys + i + 1, n->keys + i, n->n - i);
-                // TODO values are currently not a copy but the original ones
                 memmove_sized(n->children.values + i + 1, n->children.values + i, (n->n - i));
                 n->keys[i] = key;
                 n->children.values[i] = value;
@@ -195,8 +200,14 @@ void node_insert(node *n, key_t key, value_t value, node **node_group, pthread_s
                 n = clone + (n - *node_group);
                 // shift values to right an insert
                 memmove_sized(n->keys + i + 1, n->keys + i, n->n - i);
-                // TODO values are currently not a copy but the original ones
-                memmove_sized(n->children.values + i + 1, n->children.values + i, (n->n - i));
+
+                // clone values
+                value_t *value_clones = malloc(sizeof(value_t) * (ORDER - 1));
+                memcpy_sized(value_clones, n->children.values, i);
+                value_t *old_values = n->children.values;
+                n->children.values = value_clones;
+
+                memcpy_sized(n->children.values + i + 1, old_values + i, (n->n - i));
                 n->keys[i] = key;
                 n->children.values[i] = value;
                 n->n++;
@@ -208,6 +219,7 @@ void node_insert(node *n, key_t key, value_t value, node **node_group, pthread_s
                 // TODO this free can lead to other threads reading from freed memory
                 // FIX  manual garbage collection thread
                 free(old_group);
+                free(old_values);
             }
             pthread_spin_unlock(write_lock);
             return;
