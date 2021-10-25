@@ -1,3 +1,6 @@
+#include <unistd.h>
+#include <stdlib.h>
+
 typedef u_int64_t value_t;
 
 typedef struct value_pool
@@ -12,7 +15,5 @@ typedef struct value_pool
 
 void value_pool_grow(value_pool *pool);
 void value_pool_init(value_pool *pool, int elm_size);
-
 void value_pool_free(value_pool *pool);
-
 value_t *value_pool_alloc(value_pool *pool);
