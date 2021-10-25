@@ -1,19 +1,64 @@
-#include <string.h>
 #include "bptree.h"
 
-node *node_create(bool is_leaf)
+void value_pool_grow(value_pool *pool)
 {
-    node *n = (node *)aligned_alloc(32, (sizeof(node) + 31) / 32 * 32);
+    pool->num_pages++;
+    pool->pages = realloc(pool->pages, sizeof(value_t *) * pool->num_pages);
+    pool->pages[pool->num_pages - 1] = malloc(sizeof(value_t[ORDER - 1]) * pool->values_per_page);
+    pool->n = pool->num_pages * pool->values_per_page;
+    pool->i = 0;
+}
+
+void value_pool_init(value_pool *pool)
+{
+    pool->num_pages = 0;
+    pool->values_per_page = sysconf(_SC_PAGESIZE) / sizeof(value_t[ORDER - 1]);
+    value_pool_grow(pool);
+}
+
+void value_pool_free(value_pool *pool)
+{
+    for (int i = 0; i < pool->num_pages; i++)
+        free(pool->pages[i]);
+    free(pool->pages);
+}
+
+value_t *value_pool_alloc(value_pool *pool)
+{
+    if (pool->i == pool->values_per_page)
+    {
+        value_pool_grow(pool);
+    }
+
+    value_t *last_page = pool->pages[pool->num_pages - 1];
+    value_t *v = last_page + pool->i * (ORDER - 1);
+    pool->i++;
+    return v;
+}
+
+void node_init(node *n, bool is_leaf, value_pool *pool)
+{
+
     n->n = 0;
     n->is_leaf = is_leaf;
+    // set all keys to max value as default to avoid masking when compare with AVX
     for (int i = 0; i < ORDER - 1; i++)
         n->keys[i] = KEY_T_MAX;
-    return n;
+    // point children to memory allocated for it after node struct
+    if (n->is_leaf)
+    {
+        n->children.values = value_pool_alloc(pool);
+    }
+    else
+    {
+        n->children.next = (node *)aligned_alloc(32, sizeof(node) * ORDER);
+    }
+    pthread_spin_init(&n->write_lock, 0);
 }
 
 #if __AVX2__
 
-inline uint64_t cmp(__m256i x_vec, key_t *y_ptr)
+static inline uint64_t cmp(__m256i x_vec, key_t *y_ptr)
 {
     __m256i y_vec = _mm256_load_si256((__m256i *)y_ptr);
     __m256i mask = _mm256_cmpgt_epi(x_vec, y_vec);
@@ -53,62 +98,53 @@ value_t *node_get(node *n, key_t key)
         if (n->is_leaf)
         {
             if (eq)
-                return &n->children[i].value;
+                return &n->children.values[i];
             else
                 return NULL;
         }
         else
         {
             if (eq)
-                n = n->children[i + 1].next;
+                n = &(n->children.next[i + 1]);
             else
-                n = n->children[i].next;
+                n = &(n->children.next[i]);
         }
     }
 }
 
-void node_split(node *n, uint16_t i, node *child)
+void node_split(node *n, uint16_t i, node *child, value_pool *pool)
 {
-    node *right = node_create(child->is_leaf);
-    int min_deg = (ORDER + ORDER % 2) / 2;
+    // Since this node is going to have a new child,
+    // create space of new child
+    memmove_sized(n->children.next + i + 2, n->children.next + i + 1, n->n - i);
+
+    // we are storing the new right node in the children of the current node
+    node *right = &(n->children.next[i + 1]);
+    node_init(right, child->is_leaf, pool);
+
+    int min_deg = (ORDER + ORDER % 2) / 2; // divide by two and ceil
     // is we split child split value has to be reinserted into right node
     // k makes sure all new values in the node are moved one to the right
     int k = child->is_leaf ? 1 : 0;
 
     right->n = (ORDER - min_deg - 1) + k;
-    if (k == 1)
+    // copy vales (leaf node) or child nodes
+    if (child->is_leaf)
     {
-        right->keys[0] = child->keys[min_deg - 1];
-        right->children[0].value = child->children[min_deg - 1].value;
+        memcpy_sized(right->children.values, child->children.values + min_deg - 1, right->n);
+    }
+    else
+    {
+        // TODO i think these children also need to be cloned
+        memcpy_sized(right->children.next + k, child->children.next + min_deg, right->n + 1);
     }
 
-    for (int j = 0; j < right->n - k; j++)
-    {
-        right->keys[j + k] = child->keys[j + min_deg];
-        right->children[j + k] = child->children[j + min_deg];
-    }
-
-    // if non leaf node also copy last one
-    if (!child->is_leaf)
-    {
-        right->children[right->n] = child->children[ORDER - 1];
-    }
-
-    // Reduce the number of keys in y
-    child->n = min_deg - 1;
-
-    // Since this node is going to have a new child,
-    // create space of new child
-    for (int j = n->n; j >= i + 1; j--)
-        n->children[j + 1] = n->children[j];
-
-    // Link the new child to this node
-    n->children[i + 1].next = right;
+    // move keys to new right node
+    memcpy_sized(right->keys, child->keys + min_deg - k, right->n + k);
 
     // A key of y will move to this node. Find the location of
     // new key and move all greater keys one space ahead
-    for (int j = n->n - 1; j >= i; j--)
-        n->keys[j + 1] = n->keys[j];
+    memmove_sized(n->keys + i + 1, n->keys + i, n->n - i);
 
     // Copy the middle key of y to this node
     n->keys[i] = child->keys[min_deg - 1];
@@ -117,63 +153,125 @@ void node_split(node *n, uint16_t i, node *child)
     n->n++;
 }
 
-void node_insert(node *n, key_t key, value_t value)
+node *node_clone_group(node *group)
 {
+    node *clone = aligned_alloc(32, sizeof(node) * ORDER);
+    memcpy_sized(clone, group, ORDER);
+    return clone;
+}
+
+void node_insert(node *n, key_t key, value_t value, value_pool *pool, node **node_group, bool is_root)
+{
+
 #ifdef __AVX2__
     __m256i cmp_key = _mm256_set1_epi(key);
 #else
     key_t cmp_key = key;
 #endif
-    uint16_t i = find_index(n->keys, n->n, cmp_key);
-    bool eq = n->keys[i] == key;
-    if (n->is_leaf)
+
+    while (true)
     {
-        if (eq)
+        pthread_spinlock_t *node_lock = &n->write_lock;
+        pthread_spin_lock(node_lock);
+        uint16_t i = find_index(n->keys, n->n, cmp_key);
+        bool eq = n->keys[i] == key;
+        if (n->is_leaf)
         {
-            n->children[i].value = value;
+            if (eq)
+            {
+                n->children.values[i] = value;
+                pthread_spin_unlock(node_lock);
+            }
+            else
+            {
+                node *clone;
+                if (!is_root)
+                {
+                    // perform insert on clone
+                    clone = node_clone_group(*node_group);
+                }
+                else
+                {
+                    clone = aligned_alloc(32, sizeof(node));
+                    memcpy_sized(clone, n, 1);
+                }
+                n = clone + (n - *node_group);
+                // shift values to right an insert
+                memmove_sized(n->keys + i + 1, n->keys + i, n->n - i);
+                // TODO values are currently not a copy but the original ones
+                memmove_sized(n->children.values + i + 1, n->children.values + i, (n->n - i));
+                n->keys[i] = key;
+                n->children.values[i] = value;
+                n->n++;
+
+                // change pointer to clone and free old one
+                node *old_group = *node_group;
+                *node_group = clone;
+                pthread_spin_unlock(node_lock);
+                free(old_group);
+            }
+            return;
         }
         else
         {
-            // shift values to right an insert
-            for (int j = n->n; j > i; j--)
-            {
-                n->keys[j] = n->keys[j - 1];
-                n->children[j] = n->children[j - 1];
-            }
-            n->keys[i] = key;
-            n->children[i].value = value;
-            n->n++;
-        }
-    }
-    else
-    {
-        if (eq)
-            i++;
-        if (n->children[i].next->n == ORDER - 1)
-        {
-            node_split(n, i, n->children[i].next);
-            if (n->keys[i] < key)
+            if (eq)
                 i++;
+            if (n->children.next[i].n == ORDER - 1)
+            {
+                node *n_group_clone = node_clone_group(*node_group);
+                node *c_group_clone = node_clone_group(n->children.next);
+                node *n_clone = n_group_clone + (n - *node_group);
+                n_clone->children.next = c_group_clone;
+
+                node *to_split = &(n_clone->children.next[i]);
+                node_split(n_clone, i, to_split, pool);
+
+                // update number of elements in node that was just split
+                int min_deg = (ORDER + ORDER % 2) / 2;
+                to_split->n = min_deg - 1;
+
+                if (n_clone->keys[i] < key)
+                    i++;
+
+                node *old_group = *node_group;
+                node *old_children = n->children.next;
+                *node_group = n_group_clone;
+                n = n_clone;
+                pthread_spin_unlock(node_lock);
+                free(old_group);
+                free(old_children);
+                // TODO after a split we insert in the next iteration
+                // this leads to another clone beeing created
+                // one could do the insertion here on the clone directly
+            }
+            else
+            {
+                pthread_spin_unlock(node_lock);
+            }
+
+            // insert in child next iteration
+            node_group = &n->children.next;
+            n = &(n->children.next[i]);
+            is_root = false;
         }
-        node_insert(n->children[i].next, key, value);
     }
 }
 
-void node_free(node *n)
+void node_free(node *n, value_pool *pool)
 {
-    if (!n->is_leaf)
+    pthread_spin_destroy(&n->write_lock);
+    for (int i = 0; i < n->n + 1; i++)
     {
-        for (int i = 0; i < n->n + 1; i++)
-        {
-            node_free(n->children[i].next);
-        }
+        if (!n->children.next[i].is_leaf)
+            node_free(&(n->children.next[i]), pool);
     }
-    free(n);
+    free(n->children.next);
 }
 
 void bptree_init(bptree *tree)
 {
     tree->root = NULL;
+    value_pool_init(&tree->pool);
 }
 
 value_t *bptree_get(bptree *tree, key_t key)
@@ -183,33 +281,55 @@ value_t *bptree_get(bptree *tree, key_t key)
     else
         return node_get(tree->root, key);
 }
+
 void bptree_insert(bptree *tree, key_t key, value_t value)
 {
     if (__builtin_expect(tree->root == NULL, 0))
     {
-        tree->root = node_create(true);
-        tree->root->keys[0] = key;
-        tree->root->children[0].value = value;
-        tree->root->n = 1;
+        node *root = aligned_alloc(32, sizeof(node));
+        node_init(root, true, &tree->pool);
+        root->keys[0] = key;
+        root->children.values[0] = value;
+        root->n = 1;
+        if (!__sync_bool_compare_and_swap(&tree->root, NULL, root))
+        {
+            // if  another thread created the root node in the mean time restart
+            free(root);
+            bptree_insert(tree, key, value);
+        }
     }
     else
     {
+        pthread_spinlock_t *root_lock = &tree->root->write_lock;
+        pthread_spin_lock(root_lock);
         if (tree->root->n == ORDER - 1)
         {
-            node *s = node_create(false);
-            s->children[0].next = tree->root;
-            node_split(s, 0, tree->root);
+            node *s = aligned_alloc(32, sizeof(node));
+            node_init(s, false, &tree->pool);
+
+            node_split(s, 0, tree->root, &tree->pool);
+
+            s->children.next[0] = *tree->root;
+
+            // Reduce the number of keys in old root element
+            int min_deg = (ORDER + ORDER % 2) / 2;
+            s->children.next[0].n = min_deg - 1;
+
             int i = 0;
             if (s->keys[0] < key)
                 i++;
-            node_insert(s->children[i].next, key, value);
-
+            node_insert(&(s->children.next[i]), key, value, &tree->pool, &s->children.next, false);
+            node *old_root = tree->root;
             // Change root
             tree->root = s;
+
+            pthread_spin_unlock(root_lock);
+            free(old_root);
         }
         else
         {
-            node_insert(tree->root, key, value);
+            pthread_spin_unlock(root_lock);
+            node_insert(tree->root, key, value, &tree->pool, &tree->root, true);
         }
     }
 }
@@ -217,5 +337,10 @@ void bptree_insert(bptree *tree, key_t key, value_t value)
 void bptree_free(bptree *tree)
 {
     if (tree->root != NULL)
-        node_free(tree->root);
+    {
+        if (!tree->root->is_leaf)
+            node_free(tree->root, &tree->pool);
+        value_pool_free(&tree->pool);
+        free(tree->root);
+    }
 }

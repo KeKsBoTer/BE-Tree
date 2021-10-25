@@ -1,5 +1,6 @@
 #include "bptree.h"
 #include "plot.h"
+#include "StopWatch.h"
 
 int main(int argc, char *argv[])
 {
@@ -17,14 +18,22 @@ int main(int argc, char *argv[])
     bptree tree;
     bptree_init(&tree);
     srand(0);
-    printf("inserting %d random values...\n", tests);
+    sw_init();
+    sw_start();
+    // printf("inserting %d random values...\n", tests);
+    // char fn[50];
     for (int i = 0; i < tests; i++)
     {
         key_t x = rand();
         bptree_insert(&tree, x, x);
+        // sprintf(fn, "trees/tree_%d.dot", i);
+        // bptree_plot(&tree, fn);
     }
     srand(0);
-    printf("done!\nretrieving...\n");
+    // printf("done!\nretrieving...\n");
+    sw_stop();
+    printf("insert:\t%fs\n", readTotalSeconds());
+    sw_start();
     for (int i = 0; i < tests; i++)
     {
         key_t x = rand();
@@ -34,6 +43,8 @@ int main(int argc, char *argv[])
             printf("ERROR: %d != %lld\n", x, v != NULL ? *v : -1);
         }
     }
+    sw_stop();
+    printf("get:\t%fs\n", readTotalSeconds());
+    // printf("done!\n");
     bptree_free(&tree);
-    printf("done!\n");
 }

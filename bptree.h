@@ -3,6 +3,10 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <immintrin.h>
+#include <string.h>
+#include <unistd.h>
+#include <pthread.h>
+#include "spinlock.h"
 
 #define memcpy_sized(dst, src, n) memcpy(dst, src, (n) * sizeof(*(dst)))
 #define memmove_sized(dst, src, n) memmove(dst, src, (n) * sizeof(*(dst)))
@@ -55,23 +59,40 @@ typedef int64_t key_t;
 
 typedef u_int64_t value_t;
 
-typedef union leaf
+typedef struct value_pool
 {
-    value_t value;
+    int n;
+    int i;
+    int num_pages;
+    int values_per_page;
+    value_t **pages;
+} value_pool;
+
+void value_pool_init(value_pool *pool);
+
+void value_pool_free(value_pool *pool);
+
+value_t *value_pool_alloc(value_pool *pool);
+
+typedef union child_group
+{
+    value_t *values;
     struct node *next;
-} leaf;
+} child_group;
 
 typedef struct node
 {
     key_t keys[ORDER - 1];
-    leaf children[ORDER];
+    child_group children;
     /** number of keys in node **/
     uint16_t n;
     /** marks node as leaf **/
     bool is_leaf;
-} node;
+    pthread_spinlock_t write_lock;
 
-node *node_create(bool is_leaf);
+} __attribute__((aligned(32))) node;
+
+void node_init(node *n, bool is_leaf, value_pool *pool);
 #if __AVX2__
 uint16_t find_index(key_t keys[ORDER - 1], int size, __m256i key);
 #else
@@ -80,14 +101,15 @@ uint16_t find_index(key_t keys[ORDER - 1], int size, key_t key);
 
 value_t *node_get(node *n, key_t key);
 
-void node_split(node *n, uint16_t i, node *child);
+void node_split(node *n, uint16_t i, node *child, value_pool *pool);
 
-void node_insert(node *n, key_t key, value_t value);
+void node_insert(node *n, key_t key, value_t value, value_pool *pool, node **node_group, bool is_root);
 
-void node_free(node *n);
+void node_free(node *n, value_pool *pool);
 typedef struct bptree
 {
     node *root;
+    value_pool pool;
 } bptree;
 
 void bptree_init(bptree *tree);
