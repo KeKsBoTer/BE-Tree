@@ -60,8 +60,6 @@ typedef int64_t key_t;
 
 typedef u_int64_t value_t;
 
-#include "mem_pool.h"
-
 #ifdef __AVX2__
 #define key_cmp_t __m256i
 #define avx_broadcast(a) _mm256_set1_epi(a)
@@ -88,7 +86,7 @@ typedef struct node
 
 } __attribute__((aligned(32))) node;
 
-void node_init(node *n, bool is_leaf, value_pool *pool);
+void node_init(node *n, bool is_leaf);
 #if __AVX2__
 uint16_t find_index(key_t keys[ORDER - 1], int size, __m256i key);
 #else
@@ -97,15 +95,14 @@ uint16_t find_index(key_t keys[ORDER - 1], int size, key_t key);
 
 value_t *node_get(node *n, key_t key);
 
-void node_split(node *n, uint16_t i, node *child, value_pool *pool);
+void node_split(node *n, uint16_t i, node *child);
 
-void node_insert(node *n, key_t key, value_t value, value_pool *pool, node **node_group, pthread_spinlock_t *root_lock, bool is_root);
+void node_insert(node *n, key_t key, value_t value, node **node_group, pthread_spinlock_t *root_lock, bool is_root);
 
-void node_free(node *n, value_pool *pool);
+void node_free(node *node);
 typedef struct bptree
 {
     node *root;
-    value_pool pool;
     pthread_spinlock_t write_lock;
 } bptree;
 
