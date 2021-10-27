@@ -10,7 +10,7 @@ void node_dot(node *n, FILE *fp)
             fprintf(fp, "%d", n->keys[i]);
             if (n->is_leaf)
             {
-                fprintf(fp, "(%lld / %lx)", n->children.values[i], (uintptr_t)n->children.values);
+                fprintf(fp, "(%ld / %lx)", n->children.values[i], (uintptr_t)n->children.values);
             }
         }
         if (i != ORDER)

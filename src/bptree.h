@@ -6,7 +6,11 @@
 #include <string.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <stdint.h>
+
+#ifndef __USE_XOPEN2K
 #include "spinlock.h"
+#endif
 
 #define memcpy_sized(dst, src, n) memcpy(dst, src, (n) * sizeof(*(dst)))
 #define memmove_sized(dst, src, n) memmove(dst, src, (n) * sizeof(*(dst)))

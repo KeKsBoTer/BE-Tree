@@ -40,7 +40,7 @@ int main(int argc, char *argv[])
         value_t *v = bptree_get(&tree, x);
         if (v == NULL || *v != x)
         {
-            printf("ERROR: %d != %lld\n", x, v != NULL ? *v : -1);
+            printf("ERROR: %d != %ld\n", x, v != NULL ? *v : -1);
         }
     }
     sw_stop();

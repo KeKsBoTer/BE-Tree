@@ -1,5 +1,6 @@
 #include <unistd.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include "bptree.h"
 
 void node_init(node *n, bool is_leaf)
@@ -322,7 +323,7 @@ void bptree_insert(bptree *tree, key_t key, value_t value)
             node_split(s, 0, tree->root);
 
             s->children.next[0] = *tree->root;
-            s->children.next[0].write_lock = 0;
+            pthread_spin_init(&s->children.next[0].write_lock, 0);
 
             // Reduce the number of keys in old root element
             int min_deg = (ORDER + ORDER % 2) / 2;
