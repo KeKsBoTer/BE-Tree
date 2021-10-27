@@ -169,7 +169,7 @@ void node_insert_no_clone(node *n, key_cmp_t cmp_key, value_t value)
     }
 }
 
-void node_insert(node *n, key_t key, value_t value, node **node_group, pthread_spinlock_t *write_lock, bool is_root)
+void node_insert(node *n, key_t key, value_t value, node **node_group, pthread_spinlock_t *write_lock, bool is_root, pqueue *free_queue, uint64_t *step)
 {
     // convert to avx value if supported
     key_cmp_t cmp_key = avx_broadcast(key);
@@ -217,10 +217,8 @@ void node_insert(node *n, key_t key, value_t value, node **node_group, pthread_s
                 node *old_group = *node_group;
                 *node_group = clone;
 
-                // TODO this free can lead to other threads reading from freed memory
-                // FIX  manual garbage collection thread
-                free(old_group);
-                free(old_values);
+                pqueue_save_free(free_queue, old_group, *step);
+                pqueue_save_free(free_queue, old_values, *step);
             }
             pthread_spin_unlock(write_lock);
             return;
@@ -253,11 +251,9 @@ void node_insert(node *n, key_t key, value_t value, node **node_group, pthread_s
                 *node_group = n_group_clone;
                 n = n_clone;
 
-                // TODO this free can lead to other threads reading from freed memory
-                // FIX  manual garbage collection thread
-                free(old_group);
-                free(old_children);
                 pthread_spin_unlock(write_lock);
+                pqueue_save_free(free_queue, old_group, *step);
+                pqueue_save_free(free_queue, old_children, *step);
                 return;
             }
             // done inserting in the child, release the lock
@@ -290,6 +286,8 @@ void bptree_init(bptree *tree)
 {
     tree->root = NULL;
     pthread_spin_init(&tree->write_lock, 0);
+    pqueue_init(&tree->get_queue);
+    tree->global_step = 0;
 }
 
 value_t *bptree_get(bptree *tree, key_t key)
@@ -297,7 +295,17 @@ value_t *bptree_get(bptree *tree, key_t key)
     if (__builtin_expect(tree->root == NULL, 0))
         return NULL;
     else
-        return node_get(tree->root, key);
+    {
+        // TODO put this in own thread
+        pthread_t thread_id = pthread_self();
+        uint64_t now = __atomic_fetch_add(&tree->global_step, 1, __ATOMIC_SEQ_CST);
+        pqueue_get_start(&tree->get_queue, thread_id, now);
+
+        value_t *result = node_get(tree->root, key);
+
+        pqueue_get_end(&tree->get_queue, thread_id);
+        return result;
+    }
 }
 
 void bptree_insert(bptree *tree, key_t key, value_t value)
@@ -332,19 +340,19 @@ void bptree_insert(bptree *tree, key_t key, value_t value)
             int i = 0;
             if (s->keys[0] < key)
                 i++;
-            node_insert(&(s->children.next[i]), key, value, &s->children.next, &s->write_lock, false);
+            node_insert(&(s->children.next[i]), key, value, &s->children.next, &s->write_lock, false, &tree->get_queue, &tree->global_step);
             node *old_root = tree->root;
             // Change root
             tree->root = s;
 
-            free(old_root);
+            pqueue_save_free(&tree->get_queue, old_root, tree->global_step);
             pthread_spin_unlock(&tree->write_lock);
         }
         else
         {
             // IMPORTANT: as you (hello future simon) can maybe see, the unlock for the
             // bptree write lock is missing. The unlock happens within the node_insert method.
-            node_insert(tree->root, key, value, &tree->root, &tree->write_lock, true);
+            node_insert(tree->root, key, value, &tree->root, &tree->write_lock, true, &tree->get_queue, &tree->global_step);
         }
     }
 }
@@ -357,5 +365,6 @@ void bptree_free(bptree *tree)
             node_free(tree->root);
         free(tree->root);
     }
+    pqueue_free(&tree->get_queue);
     pthread_spin_destroy(&tree->write_lock);
 }

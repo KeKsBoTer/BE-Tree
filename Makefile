@@ -11,8 +11,8 @@ endif
 
 all: $(TARGS)
 
-build/bptree.o: src/bptree.c
-	$(CC) $(CFLAGS) -c $< && mv *.o build/
+build/bptree.o: src/bptree.c src/free_queue.c
+	$(CC) $(CFLAGS) -c src/bptree.c src/free_queue.c && mv *.o build/
 
 build/bptree_test: build/bptree.o test/bptree_test.c
 	$(CC) $(CFLAGS) -I src build/*.o test/bptree_test.c -o build/bptree_test $(LDFLAGS)

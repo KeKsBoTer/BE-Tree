@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <stdint.h>
+#include "free_queue.h"
 
 #ifndef __USE_XOPEN2K
 #include "spinlock.h"
@@ -101,13 +102,18 @@ value_t *node_get(node *n, key_t key);
 
 void node_split(node *n, uint16_t i, node *child);
 
-void node_insert(node *n, key_t key, value_t value, node **node_group, pthread_spinlock_t *root_lock, bool is_root);
+void node_insert(node *n, key_t key, value_t value, node **node_group, pthread_spinlock_t *root_lock, bool is_root, pqueue *free_queue, uint64_t *step);
 
 void node_free(node *node);
+
+// b+ tree stuff
+
 typedef struct bptree
 {
     node *root;
     pthread_spinlock_t write_lock;
+    pqueue get_queue;
+    uint64_t global_step;
 } bptree;
 
 void bptree_init(bptree *tree);
