@@ -102,7 +102,7 @@ value_t *node_get(node *n, key_t key);
 
 void node_split(node *n, uint16_t i, node *child);
 
-void node_insert(node *n, key_t key, value_t value, node **node_group, pthread_spinlock_t *root_lock, bool is_root, pqueue *free_queue, uint64_t *step);
+void node_insert(node *n, key_t key, value_t value, node **node_group, pthread_spinlock_t *root_lock, bool is_root);
 
 void node_free(node *node);
 
