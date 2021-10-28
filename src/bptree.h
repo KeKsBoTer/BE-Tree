@@ -63,7 +63,7 @@ typedef int64_t key_t;
 
 #define ORDER (DCACHE_LINESIZE / KEY_SIZE + 1)
 
-typedef u_int64_t value_t;
+typedef char value_t[200];
 
 #ifdef __AVX2__
 #define key_cmp_t __m256i

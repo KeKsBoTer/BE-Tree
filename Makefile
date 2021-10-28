@@ -1,7 +1,7 @@
 CC = gcc 
 CFLAGS =  -Wall -m64 -mavx2 -mbmi2
 LDFLAGS = -lpthread -lm
-TARGS = build/bptree_test 
+TARGS = bin/bptree_test 
 
 ifeq ($(mode), debug)
 CFLAGS += -g
@@ -23,7 +23,7 @@ bptree_asm: bptree.h bptree.c
 .PHONY: clean clean_trees
 
 clean:
-	rm -rf  *.dSYM build/*
+	rm -rf  *.dSYM bin/*
 
 clean_trees:
 	rm -f trees/*.dot 

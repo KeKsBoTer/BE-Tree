@@ -135,7 +135,7 @@ void node_insert_no_clone(node *n, key_cmp_t cmp_key, value_t value)
         {
             if (eq)
             {
-                n->children.values[i] = value;
+                memcpy(&n->children.values[i], value, sizeof(value_t));
             }
             else
             {
@@ -143,7 +143,7 @@ void node_insert_no_clone(node *n, key_cmp_t cmp_key, value_t value)
                 memmove_sized(n->keys + i + 1, n->keys + i, n->n - i);
                 memmove_sized(n->children.values + i + 1, n->children.values + i, (n->n - i));
                 n->keys[i] = key;
-                n->children.values[i] = value;
+                memcpy(&n->children.values[i], value, sizeof(value_t));
                 n->n++;
             }
             return;
@@ -182,7 +182,7 @@ void node_insert(node *n, key_t key, value_t value, node **node_group, pthread_s
         {
             if (eq)
             {
-                n->children.values[i] = value;
+                memcpy(&n->children.values[i], value, sizeof(value_t));
             }
             else
             {
@@ -210,7 +210,7 @@ void node_insert(node *n, key_t key, value_t value, node **node_group, pthread_s
 
                 memcpy_sized(n->children.values + i + 1, old_values + i, (n->n - i));
                 n->keys[i] = key;
-                n->children.values[i] = value;
+                memcpy(&n->children.values[i], value, sizeof(value_t));
                 n->n++;
 
                 // change pointer to clone and free old one
@@ -308,7 +308,7 @@ void bptree_insert(bptree *tree, key_t key, value_t value)
         node *root = aligned_alloc(32, sizeof(node));
         node_init(root, true);
         root->keys[0] = key;
-        root->children.values[0] = value;
+        memcpy(&root->children.values[0], value, sizeof(value_t));
         root->n = 1;
         tree->root = root;
         pthread_spin_unlock(&tree->write_lock);
