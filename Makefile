@@ -11,11 +11,11 @@ endif
 
 all: $(TARGS)
 
-build/bptree.o: src/bptree.c src/free_queue.c
-	$(CC) $(CFLAGS) -c src/bptree.c src/free_queue.c && mv *.o build/
+bin/bptree.o: src/bptree.c src/free_queue.c
+	$(CC) $(CFLAGS) -c src/bptree.c src/free_queue.c && mv *.o bin/
 
-build/bptree_test: build/bptree.o test/bptree_test.c
-	$(CC) $(CFLAGS) -I src build/*.o test/bptree_test.c -o build/bptree_test $(LDFLAGS)
+bin/bptree_test: bin/bptree.o test/bptree_test.c
+	$(CC) $(CFLAGS) -I src bin/*.o test/bptree_test.c -o bin/bptree_test $(LDFLAGS)
 
 bptree_asm: bptree.h bptree.c
 	$(CC) $(CFLAGS) -S src/bptree.c -o bptree_test.asm $(LDFLAGS)
