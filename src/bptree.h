@@ -5,13 +5,13 @@
 #include <immintrin.h>
 #include <string.h>
 #include <unistd.h>
-// #include <pthread.h>
+#include <pthread.h>
 #include <stdint.h>
 #include "free_queue.h"
 
-// #ifndef __USE_XOPEN2K
+#ifndef __USE_XOPEN2K
 #include "spinlock.h"
-// #endif
+#endif
 
 #define memcpy_sized(dst, src, n) memcpy(dst, src, (n) * sizeof(*(dst)))
 #define memmove_sized(dst, src, n) memmove(dst, src, (n) * sizeof(*(dst)))
@@ -102,7 +102,7 @@ value_t *node_get(node *n, key_t key);
 
 void node_split(node *n, uint16_t i, node *child);
 
-void node_insert(node *n, key_t key, value_t value, node **node_group, pthread_spinlock_t *root_lock, bool is_root);
+void node_insert(node *n, key_t key, key_cmp_t cmp_key, value_t value, node **node_group, pthread_spinlock_t *root_lock, bool is_root);
 
 void node_free(node *node);
 

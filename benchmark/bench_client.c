@@ -152,7 +152,7 @@ static void *queries_exec(void *param)
             enum query_types type = queries[i].type;
             key_t key = *((key_t *)queries[i].hashed_key);
             char buf[200];
-
+            sprintf(buf, "%d", key);
             if (type == query_put)
             {
                 bptree_insert(db_data, key, buf);
@@ -170,7 +170,6 @@ static void *queries_exec(void *param)
                 }
                 else
                 {
-                    //free(val);
                     p->num_hits++;
                 }
             }

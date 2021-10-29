@@ -14,10 +14,20 @@ void node_init(node *n, bool is_leaf)
     if (n->is_leaf)
     {
         n->children.values = malloc(sizeof(value_t[ORDER - 1]));
+        if (n->children.values == NULL)
+        {
+            perror("not enough memory\n");
+            exit(-1);
+        }
     }
     else
     {
         n->children.next = aligned_alloc(32, sizeof(node) * ORDER);
+        if (n->children.next == NULL)
+        {
+            perror("not enough memory\n");
+            exit(-1);
+        }
     }
     pthread_spin_init(&n->write_lock, 0);
 }
@@ -120,13 +130,19 @@ void node_split(node *n, uint16_t i, node *child)
 node *node_clone_group(node *group)
 {
     node *clone = aligned_alloc(32, sizeof(node) * ORDER);
+    if (clone == NULL)
+    {
+        perror("not enough memory\n");
+        exit(-1);
+    }
     memcpy_sized(clone, group, ORDER);
+    for (int i = 0; i < ORDER; i++)
+        pthread_spin_init(&clone[i].write_lock, 0);
     return clone;
 }
 
-void node_insert_no_clone(node *n, key_cmp_t cmp_key, value_t value)
+void node_insert_no_clone(node *n, key_t key, key_cmp_t cmp_key, value_t value)
 {
-    key_t key = *((key_t *)(&cmp_key));
     while (true)
     {
         uint16_t i = find_index(n->keys, n->n, cmp_key);
@@ -169,105 +185,105 @@ void node_insert_no_clone(node *n, key_cmp_t cmp_key, value_t value)
     }
 }
 
-void node_insert(node *n, key_t key, value_t value, node **node_group, pthread_spinlock_t *write_lock, bool is_root)
+void node_insert(node *n, key_t key, key_cmp_t cmp_key, value_t value, node **node_group, pthread_spinlock_t *write_lock, bool is_root)
 {
-    // convert to avx value if supported
-    key_cmp_t cmp_key = avx_broadcast(key);
-
-    while (true)
+    uint16_t i = find_index(n->keys, n->n, cmp_key);
+    bool eq = n->keys[i] == key;
+    if (n->is_leaf)
     {
-        uint16_t i = find_index(n->keys, n->n, cmp_key);
-        bool eq = n->keys[i] == key;
-        if (n->is_leaf)
+        if (eq)
         {
-            if (eq)
-            {
-                memcpy(&n->children.values[i], value, sizeof(value_t));
-            }
-            else
-            {
-                node *clone;
-                if (!is_root)
-                {
-                    // clone entire node group and perform insertion on this clone
-                    clone = node_clone_group(*node_group);
-                }
-                else
-                {
-                    // we are in root so only clone current node
-                    clone = aligned_alloc(32, sizeof(node));
-                    memcpy_sized(clone, n, 1);
-                }
-                n = clone + (n - *node_group);
-                // shift values to right an insert
-                memmove_sized(n->keys + i + 1, n->keys + i, n->n - i);
-
-                // clone values
-                value_t *value_clones = malloc(sizeof(value_t) * (ORDER - 1));
-                memcpy_sized(value_clones, n->children.values, i);
-                value_t *old_values = n->children.values;
-                n->children.values = value_clones;
-
-                memcpy_sized(n->children.values + i + 1, old_values + i, (n->n - i));
-                n->keys[i] = key;
-                memcpy(&n->children.values[i], value, sizeof(value_t));
-                n->n++;
-
-                // change pointer to clone and free old one
-                node *old_group = *node_group;
-                *node_group = clone;
-
-                free(old_group);
-                free(old_values);
-            }
+            memcpy(&n->children.values[i], value, sizeof(value_t));
             pthread_spin_unlock(write_lock);
-            return;
         }
         else
         {
-            if (eq)
-                i++;
-            if (n->children.next[i].n == ORDER - 1)
+            node *clone;
+            if (!is_root)
             {
-                node *n_group_clone = node_clone_group(*node_group);
-                node *c_group_clone = node_clone_group(n->children.next);
-                node *n_clone = n_group_clone + (n - *node_group);
-                n_clone->children.next = c_group_clone;
-
-                node *to_split = &(n_clone->children.next[i]);
-                node_split(n_clone, i, to_split);
-
-                // update number of elements in node that was just split
-                int min_deg = (ORDER + ORDER % 2) / 2;
-                to_split->n = min_deg - 1;
-
-                if (n_clone->keys[i] < key)
-                    i++;
-
-                node_insert_no_clone(&(n_clone->children.next[i]), cmp_key, value);
-
-                node *old_group = *node_group;
-                node *old_children = n->children.next;
-                *node_group = n_group_clone;
-                n = n_clone;
-
-                pthread_spin_unlock(write_lock);
-                free(old_group);
-                free(old_children);
-                return;
+                // clone entire node group and perform insertion on this clone
+                clone = node_clone_group(*node_group);
             }
-            // done inserting in the child, release the lock
+            else
+            {
+                // we are in root so only clone current node
+                clone = aligned_alloc(32, sizeof(node));
+                if (clone == NULL)
+                {
+                    perror("not enough memory\n");
+                    exit(-1);
+                }
+                memcpy_sized(clone, n, 1);
+                pthread_spin_init(&clone->write_lock, 0);
+            }
+            node *n2 = clone + (n - *node_group);
+            // shift values to right an insert
+            memmove_sized(n2->keys + i + 1, n2->keys + i, n2->n - i);
+
+            // clone values
+            value_t *value_clones = malloc(sizeof(value_t) * (ORDER - 1));
+            if (value_clones == NULL)
+            {
+                perror("not enough memory\n");
+                exit(-1);
+            }
+            memcpy_sized(value_clones, n2->children.values, i);
+            value_t *old_values = n2->children.values;
+            n2->children.values = value_clones;
+
+            memcpy_sized(n2->children.values + i + 1, old_values + i, (n2->n - i));
+            n2->keys[i] = key;
+            memcpy(&n2->children.values[i], value, sizeof(value_t));
+            n2->n++;
+
+            // change pointer to clone and free old one
+            node *old_group = *node_group;
+            *node_group = clone;
+
+            free(old_group);
+            free(old_values);
             pthread_spin_unlock(write_lock);
-
-            // require lock for children since they are accessed next
-            write_lock = &n->write_lock;
-            pthread_spin_lock(write_lock);
-
-            // insert in child in next iteration (tail recursion)
-            node_group = &n->children.next;
-            n = &(n->children.next[i]);
-            is_root = false;
         }
+        return;
+    }
+    else
+    {
+        if (eq)
+            i++;
+        if (n->children.next[i].n == ORDER - 1)
+        {
+            node *n_group_clone = node_clone_group(*node_group);
+            node *c_group_clone = node_clone_group(n->children.next);
+            node *n_clone = n_group_clone + (n - *node_group);
+            n_clone->children.next = c_group_clone;
+
+            node *to_split = &(n_clone->children.next[i]);
+            node_split(n_clone, i, to_split);
+
+            // update number of elements in node that was just split
+            int min_deg = (ORDER + ORDER % 2) / 2;
+            to_split->n = min_deg - 1;
+
+            if (n_clone->keys[i] < key)
+                i++;
+
+            node_insert_no_clone(&(n_clone->children.next[i]), key, cmp_key, value);
+
+            node *old_group = *node_group;
+            node *old_children = n->children.next;
+            *node_group = n_group_clone;
+            n = n_clone;
+
+            free(old_group);
+            free(old_children);
+            pthread_spin_unlock(write_lock);
+            return;
+        }
+        pthread_spin_lock(&n->write_lock);
+        node_insert(&(n->children.next[i]), key, cmp_key, value, &n->children.next, &n->write_lock, false);
+
+        // done inserting in the child, release the lock
+        pthread_spin_unlock(write_lock);
     }
 }
 
@@ -306,18 +322,30 @@ void bptree_insert(bptree *tree, key_t key, value_t value)
     if (__builtin_expect(tree->root == NULL, 0))
     {
         node *root = aligned_alloc(32, sizeof(node));
+        if (root == NULL)
+        {
+            perror("not enough memory\n");
+            exit(-1);
+        }
         node_init(root, true);
         root->keys[0] = key;
         memcpy(&root->children.values[0], value, sizeof(value_t));
         root->n = 1;
         tree->root = root;
         pthread_spin_unlock(&tree->write_lock);
+        return;
     }
     else
     {
+        key_cmp_t cmp_key = avx_broadcast(key);
         if (tree->root->n == ORDER - 1)
         {
             node *s = aligned_alloc(32, sizeof(node));
+            if (s == NULL)
+            {
+                perror("not enough memory\n");
+                exit(-1);
+            }
             node_init(s, false);
 
             node_split(s, 0, tree->root);
@@ -332,7 +360,7 @@ void bptree_insert(bptree *tree, key_t key, value_t value)
             int i = 0;
             if (s->keys[0] < key)
                 i++;
-            node_insert(&(s->children.next[i]), key, value, &s->children.next, &s->write_lock, false);
+            node_insert(&(s->children.next[i]), key, cmp_key, value, &s->children.next, &s->write_lock, false);
             node *old_root = tree->root;
             // Change root
             tree->root = s;
@@ -344,7 +372,7 @@ void bptree_insert(bptree *tree, key_t key, value_t value)
         {
             // IMPORTANT: as you (hello future simon) can maybe see, the unlock for the
             // bptree write lock is missing. The unlock happens within the node_insert method.
-            node_insert(tree->root, key, value, &tree->root, &tree->write_lock, true);
+            node_insert(tree->root, key, cmp_key, value, &tree->root, &tree->write_lock, true);
         }
     }
 }

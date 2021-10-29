@@ -4,3 +4,4 @@
 *.asm
 *.o
 bptree_test
+benchmark/bench_client

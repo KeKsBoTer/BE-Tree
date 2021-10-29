@@ -5,6 +5,6 @@
  * size of the key in bytes
  */
 #define NKEY 4
-#define NVAL 32
+#define NVAL 24
 
 #endif
