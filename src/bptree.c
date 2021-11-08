@@ -123,6 +123,7 @@ void node_split(node *n, uint16_t i, node *child)
 
 /**
  * @brief clones a a node group by copying its values
+ * all spin locks in the clone are unlocked
  * 
  * @param group poiter to group with ORDER nodes
  * @return node* pointer to clone
@@ -141,6 +142,15 @@ node *node_clone_group(node *group)
     return clone;
 }
 
+/**
+ * @brief Insets a value into a node without cloning the node (to allow for concurret get access)
+ * this is used to insert into an already cloned node.
+ * 
+ * @param n node that is inserted to 
+ * @param key key used for insertion
+ * @param cmp_key key used for comparison. Is of type __m256i if AVX2 is enables, otherwise same as key.
+ * @param value value assosiated with the key
+ */
 void node_insert_no_clone(node *n, key_t key, key_cmp_t cmp_key, value_t value)
 {
     while (true)
