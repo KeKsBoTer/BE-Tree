@@ -91,6 +91,14 @@ typedef struct node
 
 } __attribute__((aligned(32))) node;
 
+typedef struct bptree
+{
+    node *root;
+    pthread_spinlock_t write_lock;
+    pqueue get_queue;
+    uint64_t global_step;
+} bptree;
+
 void node_init(node *n, bool is_leaf);
 #if __AVX2__
 uint16_t find_index(key_t keys[ORDER - 1], int size, __m256i key);
@@ -102,19 +110,11 @@ value_t *node_get(node *n, key_t key);
 
 void node_split(node *n, uint16_t i, node *child);
 
-void node_insert(node *n, key_t key, key_cmp_t cmp_key, value_t value, node **node_group, pthread_spinlock_t *root_lock, bool is_root);
-
 void node_free(node *node);
 
-// b+ tree stuff
+void node_insert(node *n, key_t key, key_cmp_t cmp_key, value_t value, node **node_group, pthread_spinlock_t *write_lock, bptree *tree);
 
-typedef struct bptree
-{
-    node *root;
-    pthread_spinlock_t write_lock;
-    pqueue get_queue;
-    uint64_t global_step;
-} bptree;
+// b+ tree stuff
 
 void bptree_init(bptree *tree);
 

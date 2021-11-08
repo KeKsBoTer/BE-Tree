@@ -59,6 +59,7 @@ void pqueue_init(pqueue *queue)
     queue->get_queue = NULL;
     queue->free_queue = NULL;
 }
+
 void pqueue_get_start(pqueue *queue, pthread_t id, uint64_t step)
 {
     if (queue->get_queue == NULL)

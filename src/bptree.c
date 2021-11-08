@@ -195,10 +195,11 @@ void node_insert_no_clone(node *n, key_t key, key_cmp_t cmp_key, value_t value)
     }
 }
 
-void node_insert(node *n, key_t key, key_cmp_t cmp_key, value_t value, node **node_group, pthread_spinlock_t *write_lock, bool is_root)
+void node_insert(node *n, key_t key, key_cmp_t cmp_key, value_t value, node **node_group, pthread_spinlock_t *write_lock, bptree *tree)
 {
     uint16_t i = find_index(n->keys, n->n, cmp_key);
     bool eq = n->keys[i] == key;
+    pqueue *free_queue = &tree->get_queue;
     if (n->is_leaf)
     {
         if (eq)
@@ -209,7 +210,7 @@ void node_insert(node *n, key_t key, key_cmp_t cmp_key, value_t value, node **no
         else
         {
             node *clone;
-            if (!is_root)
+            if (!(tree->root == n))
             {
                 // clone entire node group and perform insertion on this clone
                 clone = node_clone_group(*node_group);
@@ -250,8 +251,8 @@ void node_insert(node *n, key_t key, key_cmp_t cmp_key, value_t value, node **no
             node *old_group = *node_group;
             *node_group = clone;
 
-            free(old_group);
-            free(old_values);
+            pqueue_save_free(free_queue, old_group, tree->global_step);
+            pqueue_save_free(free_queue, old_values, tree->global_step);
             pthread_spin_unlock(write_lock);
         }
         return;
@@ -284,13 +285,13 @@ void node_insert(node *n, key_t key, key_cmp_t cmp_key, value_t value, node **no
             *node_group = n_group_clone;
             n = n_clone;
 
-            free(old_group);
-            free(old_children);
+            pqueue_save_free(free_queue, old_group, tree->global_step);
+            pqueue_save_free(free_queue, old_children, tree->global_step);
             pthread_spin_unlock(write_lock);
             return;
         }
         pthread_spin_lock(&n->write_lock);
-        node_insert(&(n->children.next[i]), key, cmp_key, value, &n->children.next, &n->write_lock, false);
+        node_insert(&(n->children.next[i]), key, cmp_key, value, &n->children.next, &n->write_lock, tree);
 
         // done inserting in the child, release the lock
         pthread_spin_unlock(write_lock);
@@ -322,7 +323,15 @@ value_t *bptree_get(bptree *tree, key_t key)
         return NULL;
     else
     {
-        return node_get(tree->root, key);
+        // TODO put this in own thread
+        pthread_t thread_id = pthread_self();
+        uint64_t now = __atomic_fetch_add(&tree->global_step, 1, __ATOMIC_SEQ_CST);
+        pqueue_get_start(&tree->get_queue, thread_id, now);
+
+        value_t *result = node_get(tree->root, key);
+
+        pqueue_get_end(&tree->get_queue, thread_id);
+        return result;
     }
 }
 
@@ -370,19 +379,19 @@ void bptree_insert(bptree *tree, key_t key, value_t value)
             int i = 0;
             if (s->keys[0] < key)
                 i++;
-            node_insert(&(s->children.next[i]), key, cmp_key, value, &s->children.next, &s->write_lock, false);
+            node_insert(&(s->children.next[i]), key, cmp_key, value, &s->children.next, &s->write_lock, tree);
             node *old_root = tree->root;
             // Change root
             tree->root = s;
 
             pthread_spin_unlock(&tree->write_lock);
-            free(old_root);
+            pqueue_save_free(&tree->get_queue, old_root, tree->global_step);
         }
         else
         {
             // IMPORTANT: as you (hello future simon) can maybe see, the unlock for the
             // bptree write lock is missing. The unlock happens within the node_insert method.
-            node_insert(tree->root, key, cmp_key, value, &tree->root, &tree->write_lock, true);
+            node_insert(tree->root, key, cmp_key, value, &tree->root, &tree->write_lock, tree);
         }
     }
 }
