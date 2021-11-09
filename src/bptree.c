@@ -195,11 +195,54 @@ void node_insert_no_clone(node *n, key_t key, key_cmp_t cmp_key, value_t value)
     }
 }
 
+void save_free(bptree *tree, void *memory)
+{
+    int pipe_w = tree->free_pipe[1];
+    garbage_msg msg = {
+        .type = MsgFree,
+        .step = tree->global_step,
+        .msg.memory = memory,
+    };
+    if (write(pipe_w, &msg, sizeof(msg)) == -1)
+    {
+        printf("cannot write to pipe %d\n", pipe_w);
+        exit(-1);
+    }
+}
+
+void save_get_start(bptree *tree, pthread_t thread_id, uint64_t step)
+{
+    int pipe_w = tree->free_pipe[1];
+    garbage_msg msg = {
+        .type = MsgGet,
+        .step = step,
+        .msg.get = {.type = GetStart, .id = thread_id},
+    };
+    if (write(pipe_w, &msg, sizeof(msg)) == -1)
+    {
+        printf("cannot write to pipe %d\n", pipe_w);
+        exit(-1);
+    }
+}
+void save_get_end(bptree *tree, pthread_t thread_id)
+{
+    int pipe_w = tree->free_pipe[1];
+    garbage_msg msg = {
+        .type = MsgGet,
+        .step = tree->global_step,
+        .msg.get = {.type = GetEnd, .id = thread_id},
+    };
+    if (write(pipe_w, &msg, sizeof(msg)) == -1)
+    {
+        printf("cannot write to pipe %d\n", pipe_w);
+        exit(-1);
+    }
+}
+
 void node_insert(node *n, key_t key, key_cmp_t cmp_key, value_t value, node **node_group, pthread_spinlock_t *write_lock, bptree *tree)
 {
     uint16_t i = find_index(n->keys, n->n, cmp_key);
     bool eq = n->keys[i] == key;
-    pqueue *free_queue = &tree->get_queue;
     if (n->is_leaf)
     {
         if (eq)
@@ -250,9 +293,8 @@ void node_insert(node *n, key_t key, key_cmp_t cmp_key, value_t value, node **no
             // change pointer to clone and free old one
             node *old_group = *node_group;
             *node_group = clone;
-
-            pqueue_save_free(free_queue, old_group, tree->global_step);
-            pqueue_save_free(free_queue, old_values, tree->global_step);
+            save_free(tree, old_group);
+            save_free(tree, old_values);
             pthread_spin_unlock(write_lock);
         }
         return;
@@ -285,8 +327,8 @@ void node_insert(node *n, key_t key, key_cmp_t cmp_key, value_t value, node **no
             *node_group = n_group_clone;
             n = n_clone;
 
-            pqueue_save_free(free_queue, old_group, tree->global_step);
-            pqueue_save_free(free_queue, old_children, tree->global_step);
+            save_free(tree, old_group);
+            save_free(tree, old_children);
             pthread_spin_unlock(write_lock);
             return;
         }
@@ -309,12 +351,72 @@ void node_free(node *n)
     free(n->children.next);
 }
 
+void *garbage_collector(void *args)
+{
+    int p = *((int *)args);
+
+    pqueue queue;
+    pqueue_init(&queue);
+    garbage_msg g_msg;
+    while (1)
+    {
+        int n = read(p, &g_msg, sizeof(garbage_msg));
+        if (n == -1)
+        {
+            printf("cannot read from pipe\n");
+            exit(-1);
+        }
+        else if (n == 0)
+        {
+            pqueue_free(&queue);
+            pthread_exit(NULL);
+            return NULL;
+        }
+        switch (g_msg.type)
+        {
+        case MsgGet:
+            switch (g_msg.msg.get.type)
+            {
+            case GetStart:
+                pqueue_get_start(&queue, g_msg.msg.get.id, g_msg.step);
+                break;
+            case GetEnd:
+                pqueue_get_end(&queue, g_msg.msg.get.id);
+                break;
+
+            default:
+                printf("undefined get message type: %d", g_msg.msg.get.type);
+                exit(-1);
+                break;
+            }
+            break;
+
+        case MsgFree:
+            pqueue_save_free(&queue, g_msg.msg.memory, g_msg.step);
+            break;
+        default:
+            printf("undefined message type: %d", g_msg.type);
+            exit(-1);
+            break;
+        }
+    }
+    pqueue_free(&queue);
+    pthread_exit(NULL);
+    return NULL;
+}
+
 void bptree_init(bptree *tree)
 {
     tree->root = NULL;
     pthread_spin_init(&tree->write_lock, 0);
-    pqueue_init(&tree->get_queue);
     tree->global_step = 0;
+
+    if (pipe(tree->free_pipe) < 0)
+    {
+        printf("cannot create pipe\n");
+        exit(-1);
+    }
+    pthread_create(&tree->free_thread, NULL, garbage_collector, (void *)tree->free_pipe);
 }
 
 value_t *bptree_get(bptree *tree, key_t key)
@@ -323,14 +425,13 @@ value_t *bptree_get(bptree *tree, key_t key)
         return NULL;
     else
     {
-        // TODO put this in own thread
         pthread_t thread_id = pthread_self();
         uint64_t now = __atomic_fetch_add(&tree->global_step, 1, __ATOMIC_SEQ_CST);
-        pqueue_get_start(&tree->get_queue, thread_id, now);
+        save_get_start(tree, thread_id, now);
 
         value_t *result = node_get(tree->root, key);
 
-        pqueue_get_end(&tree->get_queue, thread_id);
+        save_get_end(tree, thread_id);
         return result;
     }
 }
@@ -385,7 +486,7 @@ void bptree_insert(bptree *tree, key_t key, value_t value)
             tree->root = s;
 
             pthread_spin_unlock(&tree->write_lock);
-            pqueue_save_free(&tree->get_queue, old_root, tree->global_step);
+            save_free(tree, old_root);
         }
         else
         {
@@ -404,6 +505,8 @@ void bptree_free(bptree *tree)
             node_free(tree->root);
         free(tree->root);
     }
-    pqueue_free(&tree->get_queue);
+    pthread_cancel(tree->free_thread);
+    close(tree->free_pipe[0]);
+    close(tree->free_pipe[1]);
     pthread_spin_destroy(&tree->write_lock);
 }

@@ -95,8 +95,10 @@ typedef struct bptree
 {
     node *root;
     pthread_spinlock_t write_lock;
-    pqueue get_queue;
     uint64_t global_step;
+
+    int free_pipe[2];
+    pthread_t free_thread;
 } bptree;
 
 void node_init(node *n, bool is_leaf);

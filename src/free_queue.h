@@ -5,6 +5,29 @@
 
 // garbage collection stuff
 
+typedef struct __attribute__((__packed__)) garbage_msg
+{
+    enum __attribute__((__packed__))
+    {
+        MsgGet,
+        MsgFree
+    } type;
+    uint64_t step;
+    union
+    {
+        struct __attribute__((__packed__))
+        {
+            pthread_t id;
+            enum __attribute__((__packed__)) get_type_e
+            {
+                GetStart,
+                GetEnd
+            } type;
+        } get;
+        void *memory;
+    } msg;
+} garbage_msg;
+
 // linked list with largest step as fist element
 typedef struct free_node
 {

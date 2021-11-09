@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include "free_queue.h"
+
 // garbage collection stuff
 
 void pq_node_insert(pq_node *node, pthread_t id, uint64_t step)
@@ -15,6 +16,7 @@ void pq_node_insert(pq_node *node, pthread_t id, uint64_t step)
         if (node->next == NULL)
         {
             node->next = new;
+            new->next = NULL;
             return;
         }
         if (node->next->step > step)
@@ -71,7 +73,7 @@ void pqueue_get_start(pqueue *queue, pthread_t id, uint64_t step)
     }
     else
     {
-        if (step < queue->free_queue->step)
+        if (step < queue->get_queue->step)
         {
             // replace first element if it smaller then root
             pq_node *new = malloc(sizeof(pq_node));
@@ -156,7 +158,7 @@ void pqueue_save_free(pqueue *queue, void *memory, uint64_t step)
         {
             if (step > queue->free_queue->step)
             {
-                // replace first element if it larger then root
+                // replace first element if its step is larger then root
                 free_node *new = malloc(sizeof(free_node));
                 new->step = step;
                 new->memory = memory;
@@ -181,6 +183,7 @@ void free_node_insert(free_node *node, void *memory, uint64_t step)
         if (node->next == NULL)
         {
             node->next = new;
+            new->next = NULL;
             return;
         }
         if (node->next->step < step)
