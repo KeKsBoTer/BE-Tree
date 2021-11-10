@@ -11,13 +11,13 @@ endif
 
 all: $(TARGS)
 
-bin/bptree.o: src/bptree.c src/free_queue.c
-	$(CC) $(CFLAGS) -c src/bptree.c src/free_queue.c src/msg_stack.c && mv *.o bin/
+bin/bptree.o: src/bptree.c 
+	$(CC) $(CFLAGS) -c src/bptree.c && mv *.o bin/
 
 bin/bptree_test: bin/bptree.o test/bptree_test.c
 	$(CC) $(CFLAGS) -I src bin/*.o test/bptree_test.c -o bin/bptree_test $(LDFLAGS)
 
-bptree_asm: bptree.h bptree.c
+bptree_asm: src/bptree.h src/bptree.c
 	$(CC) $(CFLAGS) -S src/bptree.c -o bptree_test.asm $(LDFLAGS)
 
 .PHONY: clean clean_trees

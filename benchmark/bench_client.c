@@ -52,7 +52,7 @@ static float duration = 10.0;
 static char *inputfile = NULL;
 
 /* db structure is global */
-bptree *db_data;
+bptree_t *db_data;
 
 /* using sigalarm for timer */
 volatile int stop = 0;
@@ -262,7 +262,7 @@ int main(int argc, char **argv)
     size_t t;
     thread_param tp[num_threads];
 
-    db_data = malloc(sizeof(bptree));
+    db_data = malloc(sizeof(bptree_t));
     bptree_init(db_data);
 
     /* First round (ALL THREADS) */

@@ -15,7 +15,7 @@ int main(int argc, char *argv[])
             exit(1);
         }
     }
-    bptree tree;
+    bptree_t tree;
     bptree_init(&tree);
     srand(0);
     sw_init();
