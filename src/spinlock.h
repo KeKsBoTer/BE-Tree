@@ -1,6 +1,6 @@
 // source: https://github.com/majek/dump/blob/master/msqueue/pthread_spin_lock_shim.h
 // only used as polyfill on macos
-
+#pragma once
 #include <errno.h>
 
 #ifndef PTHREAD_SPIN_LOCK_SHIM

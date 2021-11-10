@@ -1,5 +1,5 @@
 CC = gcc 
-CFLAGS =  -Wall -m64 -mavx2 -mbmi2
+CFLAGS =  -Wall -m64 -mavx2 -mbmi2 -std=c11
 LDFLAGS = -lpthread -lm
 TARGS = bin/bptree_test 
 
@@ -12,7 +12,7 @@ endif
 all: $(TARGS)
 
 bin/bptree.o: src/bptree.c src/free_queue.c
-	$(CC) $(CFLAGS) -c src/bptree.c src/free_queue.c && mv *.o bin/
+	$(CC) $(CFLAGS) -c src/bptree.c src/free_queue.c src/msg_stack.c && mv *.o bin/
 
 bin/bptree_test: bin/bptree.o test/bptree_test.c
 	$(CC) $(CFLAGS) -I src bin/*.o test/bptree_test.c -o bin/bptree_test $(LDFLAGS)

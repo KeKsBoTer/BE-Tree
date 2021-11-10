@@ -1,4 +1,4 @@
-
+#pragma once
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <stdint.h>
+#include "msg_stack.h"
 #include "free_queue.h"
 
 #ifndef __USE_XOPEN2K
@@ -97,7 +98,7 @@ typedef struct bptree
     pthread_spinlock_t write_lock;
     uint64_t global_step;
 
-    int free_pipe[2];
+    lstack_t message_stack;
     pthread_t free_thread;
 } bptree;
 

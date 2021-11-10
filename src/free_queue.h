@@ -1,3 +1,4 @@
+#pragma once
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -7,14 +8,10 @@
 
 typedef struct __attribute__((__packed__)) garbage_msg
 {
-    enum __attribute__((__packed__))
-    {
-        MsgGet,
-        MsgFree
-    } type;
     uint64_t step;
-    union
+    union __attribute__((__packed__))
     {
+        void *memory;
         struct __attribute__((__packed__))
         {
             pthread_t id;
@@ -24,8 +21,12 @@ typedef struct __attribute__((__packed__)) garbage_msg
                 GetEnd
             } type;
         } get;
-        void *memory;
     } msg;
+    enum __attribute__((__packed__))
+    {
+        MsgGet,
+        MsgFree
+    } type;
 } garbage_msg;
 
 // linked list with largest step as fist element

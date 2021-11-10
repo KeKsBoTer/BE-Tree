@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include "bptree.h"
+#include "free_queue.h"
+#include "msg_stack.h"
 
 void node_init(node *n, bool is_leaf)
 {
@@ -197,46 +199,38 @@ void node_insert_no_clone(node *n, key_t key, key_cmp_t cmp_key, value_t value)
 
 void save_free(bptree *tree, void *memory)
 {
-    int pipe_w = tree->free_pipe[1];
-    garbage_msg msg = {
+    garbage_msg *msg = malloc(sizeof(garbage_msg));
+    garbage_msg _msg = {
         .type = MsgFree,
         .step = tree->global_step,
         .msg.memory = memory,
     };
-    if (write(pipe_w, &msg, sizeof(msg)) == -1)
-    {
-        printf("cannot write to pipe %d\n", pipe_w);
-        exit(-1);
-    }
+    *msg = _msg;
+    lstack_push(&tree->message_stack, msg);
 }
 
 void save_get_start(bptree *tree, pthread_t thread_id, uint64_t step)
 {
-    int pipe_w = tree->free_pipe[1];
-    garbage_msg msg = {
+    garbage_msg *msg = malloc(sizeof(garbage_msg));
+    garbage_msg _msg = {
         .type = MsgGet,
         .step = step,
         .msg.get = {.type = GetStart, .id = thread_id},
     };
-    if (write(pipe_w, &msg, sizeof(msg)) == -1)
-    {
-        printf("cannot write to pipe %d\n", pipe_w);
-        exit(-1);
-    }
+    *msg = _msg;
+    lstack_push(&tree->message_stack, msg);
 }
+
 void save_get_end(bptree *tree, pthread_t thread_id)
 {
-    int pipe_w = tree->free_pipe[1];
-    garbage_msg msg = {
+    garbage_msg *msg = malloc(sizeof(garbage_msg));
+    garbage_msg _msg = {
         .type = MsgGet,
         .step = tree->global_step,
         .msg.get = {.type = GetEnd, .id = thread_id},
     };
-    if (write(pipe_w, &msg, sizeof(msg)) == -1)
-    {
-        printf("cannot write to pipe %d\n", pipe_w);
-        exit(-1);
-    }
+    *msg = _msg;
+    lstack_push(&tree->message_stack, msg);
 }
 
 void node_insert(node *n, key_t key, key_cmp_t cmp_key, value_t value, node **node_group, pthread_spinlock_t *write_lock, bptree *tree)
@@ -353,52 +347,46 @@ void node_free(node *n)
 
 void *garbage_collector(void *args)
 {
-    int p = *((int *)args);
+    lstack_t *p = (lstack_t *)args;
 
     pqueue queue;
     pqueue_init(&queue);
-    garbage_msg g_msg;
     while (1)
     {
-        int n = read(p, &g_msg, sizeof(garbage_msg));
-        if (n == -1)
+        garbage_msg *g_msg = lstack_pop(p);
+        if (g_msg == NULL)
         {
-            printf("cannot read from pipe\n");
-            exit(-1);
+            sched_yield();
+            continue;
         }
-        else if (n == 0)
-        {
-            pqueue_free(&queue);
-            pthread_exit(NULL);
-            return NULL;
-        }
-        switch (g_msg.type)
+        switch (g_msg->type)
         {
         case MsgGet:
-            switch (g_msg.msg.get.type)
+            switch (g_msg->msg.get.type)
             {
             case GetStart:
-                pqueue_get_start(&queue, g_msg.msg.get.id, g_msg.step);
+                pqueue_get_start(&queue, g_msg->msg.get.id, g_msg->step);
                 break;
             case GetEnd:
-                pqueue_get_end(&queue, g_msg.msg.get.id);
+                pqueue_get_end(&queue, g_msg->msg.get.id);
                 break;
 
             default:
-                printf("undefined get message type: %d", g_msg.msg.get.type);
+                printf("undefined get message type: %d", g_msg->msg.get.type);
                 exit(-1);
                 break;
             }
             break;
 
         case MsgFree:
-            pqueue_save_free(&queue, g_msg.msg.memory, g_msg.step);
+            pqueue_save_free(&queue, g_msg->msg.memory, g_msg->step);
             break;
         default:
-            printf("undefined message type: %d", g_msg.type);
+            printf("undefined message type: %d", g_msg->type);
             exit(-1);
             break;
         }
+        free(g_msg);
     }
     pqueue_free(&queue);
     pthread_exit(NULL);
@@ -410,13 +398,8 @@ void bptree_init(bptree *tree)
     tree->root = NULL;
     pthread_spin_init(&tree->write_lock, 0);
     tree->global_step = 0;
-
-    if (pipe(tree->free_pipe) < 0)
-    {
-        printf("cannot create pipe\n");
-        exit(-1);
-    }
-    pthread_create(&tree->free_thread, NULL, garbage_collector, (void *)tree->free_pipe);
+    lstack_init(&tree->message_stack, MSG_STACK_SIZE);
+    pthread_create(&tree->free_thread, NULL, garbage_collector, (void *)&tree->message_stack);
 }
 
 value_t *bptree_get(bptree *tree, key_t key)
@@ -505,8 +488,7 @@ void bptree_free(bptree *tree)
             node_free(tree->root);
         free(tree->root);
     }
+    lstack_free(&tree->message_stack);
     pthread_cancel(tree->free_thread);
-    close(tree->free_pipe[0]);
-    close(tree->free_pipe[1]);
     pthread_spin_destroy(&tree->write_lock);
 }
