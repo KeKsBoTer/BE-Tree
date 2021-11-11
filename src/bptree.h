@@ -7,7 +7,6 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <stdint.h>
-#include <stdatomic.h>
 #ifndef __USE_XOPEN2K
 #include "spinlock.h"
 #endif
@@ -76,7 +75,7 @@ typedef char value_t[200];
 
 typedef struct rc_ptr_t
 {
-    atomic_uint cnt;
+    unsigned int cnt;
     union
     {
         struct node_t *nodes;
@@ -84,17 +83,26 @@ typedef struct rc_ptr_t
     } ptr;
 } __attribute__((aligned(32))) rc_ptr_t;
 
-void rc_ptr_init(rc_ptr_t *rc, void *ptr);
+static inline void rc_ptr_free(rc_ptr_t *rc)
+{
+    while (rc->cnt > 0)
+        ;
+    free(rc->ptr.nodes);
+}
 
-static inline void rc_ptr_inc(rc_ptr_t *rc);
-static inline void rc_ptr_dec(rc_ptr_t *rc);
-
-static inline void rc_ptr_free(rc_ptr_t *rc);
+static inline void rc_ptr_inc(rc_ptr_t *rc)
+{
+    __atomic_add_fetch(&rc->cnt, 1, __ATOMIC_RELAXED);
+}
+static inline void rc_ptr_dec(rc_ptr_t *rc)
+{
+    __atomic_sub_fetch(&rc->cnt, 1, __ATOMIC_RELAXED);
+}
 
 typedef struct node_t
 {
     key_t keys[ORDER - 1];
-    rc_ptr_t *_Atomic children;
+    rc_ptr_t *children;
     pthread_spinlock_t write_lock;
     /** number of keys in node **/
     uint16_t n;
@@ -105,7 +113,7 @@ typedef struct node_t
 
 typedef struct bptree
 {
-    rc_ptr_t *_Atomic root;
+    rc_ptr_t *root;
     pthread_spinlock_t write_lock;
 } bptree;
 
@@ -116,13 +124,13 @@ uint16_t find_index(key_t keys[ORDER - 1], int size, __m256i key);
 uint16_t find_index(key_t keys[ORDER - 1], int size, key_t key);
 #endif
 
-value_t *node_get(node_t *n, key_t key);
+value_t *node_get(node_t *n, key_t key, rc_ptr_t *group);
 
 void node_split(node_t *n, uint16_t i, node_t *child);
 
 void node_free(node_t *node);
 
-void node_insert(node_t *n, key_t key, key_cmp_t cmp_key, value_t value, node_t *_Atomic *node_group, pthread_spinlock_t *write_lock, bptree *tree);
+void node_insert(node_t *n, key_t key, key_cmp_t cmp_key, value_t value, rc_ptr_t **node_group, pthread_spinlock_t *write_lock, bptree *tree);
 
 // b+ tree stuff
 
