@@ -71,7 +71,7 @@ value_t *node_get(node_t *n, key_t key, rc_ptr_t *rc)
     key_cmp_t cmp_key = avx_broadcast(key);
     while (true)
     {
-        rc_ptr_inc(rc);
+        // rc_ptr_inc(rc);
         uint16_t i = find_index(n->keys, n->n, cmp_key);
         bool eq = n->keys[i] == key;
         if (n->is_leaf)
@@ -82,7 +82,7 @@ value_t *node_get(node_t *n, key_t key, rc_ptr_t *rc)
                 value_t *values = (value_t *)n->children->ptr;
                 result = &values[i];
             }
-            rc_ptr_dec(rc);
+            // rc_ptr_dec(rc);
             return result;
         }
         else
@@ -93,7 +93,7 @@ value_t *node_get(node_t *n, key_t key, rc_ptr_t *rc)
             if (eq)
                 i++;
             n = &(children[i]);
-            rc_ptr_dec(old_rc);
+            // rc_ptr_dec(old_rc);
         }
     }
 }
@@ -240,7 +240,7 @@ void node_insert(node_t *n, key_t key, key_cmp_t cmp_key, value_t value, rc_ptr_
         {
             rc_ptr_t *_Atomic clone;
             node_t *group = (node_t *)(*node_group)->ptr;
-            if (!(tree->root->ptr == n))
+            if (tree->root->ptr != n)
             {
                 // clone entire node group and perform insertion on this clone
                 clone = node_clone_group(group);
@@ -271,7 +271,7 @@ void node_insert(node_t *n, key_t key, key_cmp_t cmp_key, value_t value, rc_ptr_
                 perror("not enough memory\n");
                 exit(EXIT_FAILURE);
             }
-            rc_ptr_t *new_values = (rc_ptr_t *)(value_clones + (ORDER - 1));
+            rc_ptr_t *new_values = (rc_ptr_t *)(value_clones + sizeof(value_t) * (ORDER - 1));
             rc_ptr_init(new_values, value_clones);
 
             value_t *n_clone_values = (value_t *)n_clone->children->ptr;
@@ -280,9 +280,9 @@ void node_insert(node_t *n, key_t key, key_cmp_t cmp_key, value_t value, rc_ptr_
             n_clone->children = new_values;
 
             value_t *old_values_values = (value_t *)old_values->ptr;
-            memcpy_sized(n_clone_values + i + 1, old_values_values + i, (n_clone->n - i));
+            memcpy_sized(value_clones + i + 1, old_values_values + i, (n_clone->n - i));
             n_clone->keys[i] = key;
-            memcpy(&n_clone_values[i], value, sizeof(value_t));
+            memcpy(&value_clones[i], value, sizeof(value_t));
             n_clone->n++;
 
             // change pointer to clone and free old one
