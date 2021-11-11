@@ -75,7 +75,7 @@ typedef char value_t[200];
 
 typedef struct rc_ptr_t
 {
-    unsigned int cnt;
+    uint64_t cnt;
     union
     {
         struct node_t *nodes;

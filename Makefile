@@ -17,8 +17,8 @@ bin/bptree.o: src/bptree.c
 bin/bptree_test: bin/bptree.o test/bptree_test.c
 	$(CC) $(CFLAGS) -I src bin/*.o test/bptree_test.c -o bin/bptree_test $(LDFLAGS)
 
-bptree_asm: bptree.h bptree.c
-	$(CC) $(CFLAGS) -S src/bptree.c -o bptree_test.asm $(LDFLAGS)
+bptree_asm: src/bptree.h src/bptree.c
+	$(CC) $(CFLAGS) -g -S src/bptree.c -o bptree_test.asm $(LDFLAGS)
 
 .PHONY: clean clean_trees
 

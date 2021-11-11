@@ -29,6 +29,11 @@ rc_ptr_t *rc_nodes_create(int n)
 rc_ptr_t *rc_values_create()
 {
     value_t *values = malloc(sizeof(value_t[ORDER - 1]) + sizeof(rc_ptr_t));
+    if (values == NULL)
+    {
+        perror("not enough memory\n");
+        exit(-1);
+    }
     rc_ptr_t *rc = (rc_ptr_t *)(values + ORDER - 1);
     rc->cnt = 0;
     rc->ptr.values = values;
@@ -47,11 +52,6 @@ void node_init(node_t *n, bool is_leaf)
     else
         n->children = rc_nodes_create(ORDER);
 
-    if (n->children->ptr.values == NULL)
-    {
-        perror("not enough memory\n");
-        exit(-1);
-    }
     pthread_spin_init(&n->write_lock, 0);
 }
 
@@ -89,7 +89,6 @@ value_t *node_get(node_t *n, key_t key, rc_ptr_t *rc)
     key_cmp_t cmp_key = avx_broadcast(key);
     while (true)
     {
-        rc_ptr_inc(rc);
         uint16_t i = find_index(n->keys, n->n, cmp_key);
         bool eq = n->keys[i] == key;
         if (n->is_leaf)
@@ -104,10 +103,12 @@ value_t *node_get(node_t *n, key_t key, rc_ptr_t *rc)
         else
         {
             rc_ptr_t *old_rc = rc;
+            // TODO this fetch and increase is not really atomic... :(
             rc = n->children;
+            rc_ptr_inc(rc);
             if (eq)
                 i++;
-            n = &(n->children->ptr.nodes[i]);
+            n = &(rc->ptr.nodes[i]);
             rc_ptr_dec(old_rc);
         }
     }
@@ -231,14 +232,12 @@ void node_insert(node_t *n, key_t key, key_cmp_t cmp_key, value_t value, rc_ptr_
         }
         else
         {
-            rc_ptr_t *clone;
-
             int n_block = 1;
             if (tree->root->ptr.nodes != n)
                 n_block = ORDER;
 
-            clone = node_clone_group((*node_group)->ptr.nodes, n_block);
-            node_t *n_clone = clone->ptr.nodes + (n - (*node_group)->ptr.nodes);
+            rc_ptr_t *group_clone = node_clone_group((*node_group)->ptr.nodes, n_block);
+            node_t *n_clone = group_clone->ptr.nodes + (n - (*node_group)->ptr.nodes);
 
             // shift values to right an insert
             memmove_sized(n_clone->keys + i + 1, n_clone->keys + i, n_clone->n - i);
@@ -257,7 +256,7 @@ void node_insert(node_t *n, key_t key, key_cmp_t cmp_key, value_t value, rc_ptr_
 
             // change pointer to clone and free old one
             rc_ptr_t *old_group = *node_group;
-            *node_group = clone;
+            *node_group = group_clone;
             rc_ptr_free(old_group);
             rc_ptr_free(old_values);
             pthread_spin_unlock(write_lock);
@@ -331,6 +330,7 @@ value_t *bptree_get(bptree *tree, key_t key)
         return NULL;
     else
     {
+        rc_ptr_inc(tree->root);
         return node_get(tree->root->ptr.nodes, key, tree->root);
     }
 }
