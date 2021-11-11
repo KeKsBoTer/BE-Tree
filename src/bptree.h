@@ -7,9 +7,7 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <stdint.h>
-#include "msg_stack.h"
-#include "free_queue.h"
-
+#include <stdatomic.h>
 #ifndef __USE_XOPEN2K
 #include "spinlock.h"
 #endif
@@ -74,48 +72,57 @@ typedef char value_t[200];
 #define avx_broadcast(a) (a)
 #endif
 
-typedef union child_group
-{
-    value_t *values;
-    struct node *next;
-} child_group;
+// reference counting struct for poiter
 
-typedef struct node
+typedef struct rc_ptr_t
+{
+    atomic_uint cnt;
+    union
+    {
+        struct node_t *nodes;
+        value_t *values;
+    } ptr;
+} __attribute__((aligned(32))) rc_ptr_t;
+
+void rc_ptr_init(rc_ptr_t *rc, void *ptr);
+
+static inline void rc_ptr_inc(rc_ptr_t *rc);
+static inline void rc_ptr_dec(rc_ptr_t *rc);
+
+static inline void rc_ptr_free(rc_ptr_t *rc);
+
+typedef struct node_t
 {
     key_t keys[ORDER - 1];
-    child_group children;
+    rc_ptr_t *_Atomic children;
     pthread_spinlock_t write_lock;
     /** number of keys in node **/
     uint16_t n;
     /** marks node as leaf **/
     bool is_leaf;
 
-} __attribute__((aligned(32))) node;
+} __attribute__((aligned(32))) node_t;
 
 typedef struct bptree
 {
-    node *root;
+    rc_ptr_t *_Atomic root;
     pthread_spinlock_t write_lock;
-    uint64_t global_step;
-
-    lstack_t message_stack;
-    pthread_t free_thread;
 } bptree;
 
-void node_init(node *n, bool is_leaf);
+void node_init(node_t *n, bool is_leaf);
 #if __AVX2__
 uint16_t find_index(key_t keys[ORDER - 1], int size, __m256i key);
 #else
 uint16_t find_index(key_t keys[ORDER - 1], int size, key_t key);
 #endif
 
-value_t *node_get(node *n, key_t key);
+value_t *node_get(node_t *n, key_t key);
 
-void node_split(node *n, uint16_t i, node *child);
+void node_split(node_t *n, uint16_t i, node_t *child);
 
-void node_free(node *node);
+void node_free(node_t *node);
 
-void node_insert(node *n, key_t key, key_cmp_t cmp_key, value_t value, node **node_group, pthread_spinlock_t *write_lock, bptree *tree);
+void node_insert(node_t *n, key_t key, key_cmp_t cmp_key, value_t value, node_t *_Atomic *node_group, pthread_spinlock_t *write_lock, bptree *tree);
 
 // b+ tree stuff
 

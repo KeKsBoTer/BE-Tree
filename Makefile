@@ -11,8 +11,8 @@ endif
 
 all: $(TARGS)
 
-bin/bptree.o: src/bptree.c src/free_queue.c
-	$(CC) $(CFLAGS) -c src/bptree.c src/free_queue.c src/msg_stack.c && mv *.o bin/
+bin/bptree.o: src/bptree.c
+	$(CC) $(CFLAGS) -c src/bptree.c && mv *.o bin/
 
 bin/bptree_test: bin/bptree.o test/bptree_test.c
 	$(CC) $(CFLAGS) -I src bin/*.o test/bptree_test.c -o bin/bptree_test $(LDFLAGS)
