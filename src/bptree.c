@@ -330,8 +330,9 @@ value_t *bptree_get(bptree *tree, key_t key)
         return NULL;
     else
     {
-        rc_ptr_inc(tree->root);
-        return node_get(tree->root->ptr.nodes, key, tree->root);
+        rc_ptr_t *root = tree->root;
+        rc_ptr_inc(root);
+        return node_get(root->ptr.nodes, key, root);
     }
 }
 
