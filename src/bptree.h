@@ -7,9 +7,9 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <stdint.h>
-#ifndef __USE_XOPEN2K
-#include "spinlock.h"
-#endif
+// #ifndef __USE_XOPEN2K
+// #include "spinlock.h"
+// #endif
 
 #define memcpy_sized(dst, src, n) memcpy(dst, src, (n) * sizeof(*(dst)))
 #define memmove_sized(dst, src, n) memmove(dst, src, (n) * sizeof(*(dst)))
@@ -83,6 +83,12 @@ typedef struct rc_ptr_t
     } ptr;
 } __attribute__((aligned(32))) rc_ptr_t;
 
+static inline void rc_ptr_init(rc_ptr_t *rc, void *ptr)
+{
+    rc->cnt = 0;
+    rc->ptr.nodes = ptr;
+}
+
 static inline void rc_ptr_free(rc_ptr_t *rc)
 {
     while (rc->cnt > 0)
@@ -104,6 +110,7 @@ typedef struct node_t
     key_t keys[ORDER - 1];
     rc_ptr_t *children;
     pthread_spinlock_t write_lock;
+    pthread_spinlock_t read_lock;
     /** number of keys in node **/
     uint16_t n;
     /** marks node as leaf **/
@@ -115,6 +122,7 @@ typedef struct bptree
 {
     rc_ptr_t *root;
     pthread_spinlock_t write_lock;
+    pthread_spinlock_t read_lock;
 } bptree;
 
 void node_init(node_t *n, bool is_leaf);
@@ -130,7 +138,7 @@ void node_split(node_t *n, uint16_t i, node_t *child);
 
 void node_free(node_t *node);
 
-void node_insert(node_t *n, key_t key, key_cmp_t cmp_key, value_t value, rc_ptr_t **node_group, pthread_spinlock_t *write_lock, bptree *tree);
+void node_insert(node_t *n, key_t key, key_cmp_t cmp_key, value_t value, rc_ptr_t **node_group, pthread_spinlock_t *write_lock, pthread_spinlock_t *read_lock, bptree *tree);
 
 // b+ tree stuff
 
