@@ -59,9 +59,8 @@ value_t *node_get(node_t *n, key_t key)
         else
         {
             if (eq)
-                n = n->children[i + 1].next;
-            else
-                n = n->children[i].next;
+                i++;
+            n = n->children[i].node;
         }
     }
 }
@@ -75,22 +74,21 @@ void node_split(node_t *n, uint16_t i, node_t *child)
     int k = child->is_leaf ? 1 : 0;
 
     right->n = (ORDER - min_deg - 1) + k;
-    if (k == 1)
+    if (child->is_leaf)
     {
         right->keys[0] = child->keys[min_deg - 1];
         right->children[0].value = child->children[min_deg - 1].value;
+    }
+    else
+    {
+        // if non leaf node also copy last one
+        right->children[right->n] = child->children[ORDER - 1];
     }
 
     for (int j = 0; j < right->n - k; j++)
     {
         right->keys[j + k] = child->keys[j + min_deg];
         right->children[j + k] = child->children[j + min_deg];
-    }
-
-    // if non leaf node also copy last one
-    if (!child->is_leaf)
-    {
-        right->children[right->n] = child->children[ORDER - 1];
     }
 
     // Reduce the number of keys in y
@@ -102,7 +100,7 @@ void node_split(node_t *n, uint16_t i, node_t *child)
         n->children[j + 1] = n->children[j];
 
     // Link the new child to this node
-    n->children[i + 1].next = right;
+    n->children[i + 1].node = right;
 
     // A key of y will move to this node. Find the location of
     // new key and move all greater keys one space ahead
@@ -144,13 +142,13 @@ void node_insert(node_t *n, key_t key, value_t value)
     {
         if (eq)
             i++;
-        if (n->children[i].next->n == ORDER - 1)
+        if (n->children[i].node->n == ORDER - 1)
         {
-            node_split(n, i, n->children[i].next);
+            node_split(n, i, n->children[i].node);
             if (n->keys[i] < key)
                 i++;
         }
-        node_insert(n->children[i].next, key, value);
+        node_insert(n->children[i].node, key, value);
     }
 }
 
@@ -159,7 +157,7 @@ void node_free(node_t *n)
     if (!n->is_leaf)
     {
         for (int i = 0; i < n->n + 1; i++)
-            node_free(n->children[i].next);
+            node_free(n->children[i].node);
     }
     free(n);
 }
@@ -171,14 +169,14 @@ void bptree_init(bptree_t *tree)
 
 value_t *bptree_get(bptree_t *tree, key_t key)
 {
-    if (__builtin_expect(tree->root == NULL, 0))
+    if (tree->root == NULL)
         return NULL;
     else
         return node_get(tree->root, key);
 }
 void bptree_insert(bptree_t *tree, key_t key, value_t value)
 {
-    if (__builtin_expect(tree->root == NULL, 0))
+    if (tree->root == NULL)
     {
         tree->root = node_create(true);
         tree->root->keys[0] = key;
@@ -190,12 +188,12 @@ void bptree_insert(bptree_t *tree, key_t key, value_t value)
         if (tree->root->n == ORDER - 1)
         {
             node_t *s = node_create(false);
-            s->children[0].next = tree->root;
+            s->children[0].node = tree->root;
             node_split(s, 0, tree->root);
             int i = 0;
             if (s->keys[0] < key)
                 i++;
-            node_insert(s->children[i].next, key, value);
+            node_insert(s->children[i].node, key, value);
 
             // Change root
             tree->root = s;

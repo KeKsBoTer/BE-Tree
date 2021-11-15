@@ -23,11 +23,11 @@ void *rand_get(void *args)
 {
     args_t *t_args = (args_t *)args;
     srand(0);
-    for (int i = 0; i < t_args->tests * 10; i++)
+    for (int i = 0; i < t_args->tests; i++)
     {
         key_t x = rand();
         value_t *v = bptree_get(t_args->tree, x);
-        if (v != NULL && x != *v)
+        if (v == NULL || x != *v)
         {
             printf("ERROR: %d != %ld\n", x, v != NULL ? (uint64_t)*v : 0);
         }

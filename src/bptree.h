@@ -69,7 +69,7 @@ typedef struct node_t
     union
     {
         value_t value;
-        struct node_t *next;
+        struct node_t *node;
     } children[ORDER];
 
     /** number of keys in node **/
