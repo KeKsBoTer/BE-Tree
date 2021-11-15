@@ -85,9 +85,18 @@ uint16_t find_index(key_t keys[ORDER - 1], int size, key_t key)
 
 void safe_free(rc_ptr_t *rc, pthread_spinlock_t *lock)
 {
-    pthread_spin_lock(lock);
-    rc_ptr_free(rc);
-    pthread_spin_unlock(lock);
+    while (true)
+    {
+        pthread_spin_lock(lock);
+        if (rc->cnt == 0)
+        {
+            free(rc->ptr.nodes);
+            pthread_spin_unlock(lock);
+            break;
+        }
+        pthread_spin_unlock(lock);
+        usleep(100);
+    }
 }
 
 rc_ptr_t *access_children(pthread_spinlock_t *lock, rc_ptr_t **children)
@@ -113,7 +122,9 @@ value_t *node_get(node_t *n, key_t key, rc_ptr_t *rc)
             if (eq)
             {
                 result = malloc(sizeof(value_t));
-                memcpy(result, &n->children->ptr.values[i], sizeof(value_t));
+                rc_ptr_t *values = access_children(&n->read_lock, &n->children);
+                memcpy(result, &values->ptr.values[i], sizeof(value_t));
+                rc_ptr_dec(values);
             }
             rc_ptr_dec(rc);
             // TODO return copy here, for memory safty (data could be freed)!
@@ -190,70 +201,18 @@ rc_ptr_t *node_clone_group(node_t *group, int n)
     return rc_nodes;
 }
 
-/**
- * @brief Insets a value into a node without cloning the node (to allow for concurret get access)
- * this is used to insert into an already cloned node.
- * 
- * @param n node that is inserted to 
- * @param key key used for insertion
- * @param cmp_key key used for comparison. Is of type __m256i if AVX2 is enables, otherwise same as key.
- * @param value value assosiated with the key
- */
-void node_insert_no_clone(node_t *n, key_t key, key_cmp_t cmp_key, value_t value, bptree *tree)
-{
-    uint16_t i = find_index(n->keys, n->n, cmp_key);
-    bool eq = n->keys[i] == key;
-    pthread_spin_lock(&n->write_lock);
-    if (n->is_leaf)
-    {
-        if (eq)
-        {
-            memcpy(&n->children->ptr.values[i], value, sizeof(value_t));
-        }
-        else
-        {
-            // shift values to right an insert
-            memmove_sized(n->keys + i + 1, n->keys + i, n->n - i);
-            memmove_sized(n->children->ptr.values + i + 1, n->children->ptr.values + i, (n->n - i));
-            n->keys[i] = key;
-            memcpy(&n->children->ptr.values[i], value, sizeof(value_t));
-            n->n++;
-        }
-        pthread_spin_unlock(&n->write_lock);
-        return;
-    }
-    else
-    {
-        if (eq)
-            i++;
-        if (n->children->ptr.nodes[i].n == ORDER - 1)
-        {
-            node_t *to_split = &(n->children->ptr.nodes[i]);
-            node_split(n, i, to_split);
-
-            // update number of elements in node that was just split
-            int min_deg = (ORDER + ORDER % 2) / 2;
-            to_split->n = min_deg - 1;
-
-            if (n->keys[i] < key)
-                i++;
-        }
-        node_insert(&(n->children->ptr.nodes[i]), key, cmp_key, value, &n->children, &n->write_lock, &n->read_lock, tree);
-    }
-}
-
 void node_insert(node_t *n, key_t key, key_cmp_t cmp_key, value_t value, rc_ptr_t **node_group, pthread_spinlock_t *write_lock, pthread_spinlock_t *read_lock, bptree *tree)
 {
     uint16_t i = find_index(n->keys, n->n, cmp_key);
     bool eq = n->keys[i] == key;
-    pthread_spin_lock(&n->write_lock);
+    // pthread_spin_lock(&n->write_lock);
     if (n->is_leaf)
     {
         if (eq)
         {
             memcpy(&n->children->ptr.values[i], value, sizeof(value_t));
-            pthread_spin_unlock(&n->write_lock);
-            pthread_spin_unlock(write_lock);
+            // pthread_spin_unlock(&n->write_lock);
+            // pthread_spin_unlock(write_lock);
         }
         else
         {
@@ -281,8 +240,8 @@ void node_insert(node_t *n, key_t key, key_cmp_t cmp_key, value_t value, rc_ptr_
             n_clone->children = value_clones;
             rc_ptr_t *old_group = __atomic_exchange_n(node_group, group_clone, __ATOMIC_RELAXED);
 
-            pthread_spin_unlock(&n->write_lock);
-            pthread_spin_unlock(write_lock);
+            // pthread_spin_unlock(&n->write_lock);
+            // pthread_spin_unlock(write_lock);
 
             // free old groups in a safe manner
             safe_free(n->children, &n->read_lock);
@@ -304,13 +263,13 @@ void node_insert(node_t *n, key_t key, key_cmp_t cmp_key, value_t value, rc_ptr_
                 n_block = ORDER;
 
             rc_ptr_t *n_group_clone = node_clone_group((*node_group)->ptr.nodes, n_block);
-            rc_ptr_t *child_group_clone = node_clone_group(n->children->ptr.nodes, ORDER);
 
             node_t *n_clone = n_group_clone->ptr.nodes + (n - (*node_group)->ptr.nodes);
 
-            n_clone->children = child_group_clone;
+            n_clone->children = node_clone_group(n->children->ptr.nodes, ORDER);
+            ;
 
-            node_t *to_split = &(child_group_clone->ptr.nodes[i]);
+            node_t *to_split = &(n_clone->children->ptr.nodes[i]);
             node_split(n_clone, i, to_split);
 
             // update number of elements in node that was just split
@@ -320,12 +279,18 @@ void node_insert(node_t *n, key_t key, key_cmp_t cmp_key, value_t value, rc_ptr_
             if (n_clone->keys[i] < key)
                 i++;
 
-            node_insert_no_clone(&(child_group_clone->ptr.nodes[i]), key, cmp_key, value, tree);
+            node_insert(
+                &(n_clone->children->ptr.nodes[i]),
+                key, cmp_key, value,
+                &n_clone->children,
+                &n->write_lock,
+                &n->read_lock,
+                tree);
 
             rc_ptr_t *old_group = __atomic_exchange_n(node_group, n_group_clone, __ATOMIC_RELAXED);
 
-            pthread_spin_unlock(&n->write_lock);
-            pthread_spin_unlock(write_lock);
+            // pthread_spin_unlock(&n->write_lock);
+            // pthread_spin_unlock(write_lock);
 
             // free old groups in a safe manner
             safe_free(n->children, &n->read_lock);
@@ -335,7 +300,7 @@ void node_insert(node_t *n, key_t key, key_cmp_t cmp_key, value_t value, rc_ptr_
         }
 
         node_insert(current, key, cmp_key, value, &n->children, &n->write_lock, &n->read_lock, tree);
-        pthread_spin_unlock(write_lock);
+        // pthread_spin_unlock(write_lock);
     }
 }
 
@@ -365,10 +330,12 @@ value_t *bptree_get(bptree *tree, key_t key)
         return NULL;
     else
     {
-
+        pthread_spin_lock(&tree->write_lock);
         // reference counting
         rc_ptr_t *root = access_children(&tree->read_lock, &tree->root);
-        return node_get(root->ptr.nodes, key, root);
+        value_t *result = node_get(root->ptr.nodes, key, root);
+        pthread_spin_unlock(&tree->write_lock);
+        return result;
     }
 }
 
@@ -430,6 +397,7 @@ void bptree_insert(bptree *tree, key_t key, value_t value)
             // IMPORTANT: as you (hello future simon) can maybe see, the unlock for the
             // bptree write lock is missing. The unlock happens within the node_insert method.
             node_insert(tree->root->ptr.nodes, key, cmp_key, value, &tree->root, &tree->write_lock, &tree->read_lock, tree);
+            pthread_spin_unlock(&tree->write_lock);
         }
     }
 }
