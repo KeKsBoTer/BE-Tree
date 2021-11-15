@@ -27,7 +27,7 @@ void *rand_get(void *args)
     {
         key_t x = rand();
         value_t *v = bptree_get(t_args->tree, x);
-        if (v == NULL || x != *v)
+        if (v != NULL && x != *v)
         {
             printf("ERROR: %d != %ld\n", x, v != NULL ? (uint64_t)*v : 0);
         }
@@ -53,7 +53,7 @@ int main(int argc, char *argv[])
 
     printf("inserting %d...\n", tests);
 
-    int num_threads = 2;
+    int num_threads = 8;
     pthread_t threads[num_threads];
 
     args_t *args = malloc(sizeof(args_t));
@@ -64,12 +64,12 @@ int main(int argc, char *argv[])
         if (t % 2 == 0)
         {
             pthread_create(threads + t, NULL, rand_insert, args);
-            pthread_join(threads[t], 0);
+            // pthread_join(threads[t], 0);
         }
         else
         {
             pthread_create(threads + t, NULL, rand_get, args);
-            pthread_join(threads[t], 0);
+            // pthread_join(threads[t], 0);
         }
     }
 

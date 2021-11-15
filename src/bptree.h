@@ -1,8 +1,10 @@
 #include <stdio.h>
 #include <stdbool.h>
+#include <string.h>
+#include <immintrin.h>
 #include <stdlib.h>
 #include <stdint.h>
-#include <immintrin.h>
+#include <pthread.h>
 
 #define memcpy_sized(dst, src, n) memcpy(dst, src, (n) * sizeof(*(dst)))
 #define memmove_sized(dst, src, n) memmove(dst, src, (n) * sizeof(*(dst)))
@@ -70,12 +72,16 @@ typedef struct node_t
     {
         value_t value;
         struct node_t *node;
-    } children[ORDER];
+    } * children;
 
     /** number of keys in node **/
     uint16_t n;
     /** marks node as leaf **/
     bool is_leaf;
+
+    /** node level lock **/
+    pthread_spinlock_t lock;
+
 } __attribute__((aligned(32))) node_t;
 
 node_t *node_create(bool is_leaf);
@@ -85,16 +91,17 @@ uint16_t find_index(key_t keys[ORDER - 1], int size, __m256i key);
 uint16_t find_index(key_t keys[ORDER - 1], int size, key_t key);
 #endif
 
-value_t *node_get(node_t *n, key_t key);
+value_t *node_get(node_t *n, key_t key, pthread_spinlock_t *lock);
 
 void node_split(node_t *n, uint16_t i, node_t *child);
 
-void node_insert(node_t *n, key_t key, value_t value);
+void node_insert(node_t *n, key_t key, value_t value, pthread_spinlock_t *lock);
 
 void node_free(node_t *n);
 typedef struct bptree_t
 {
     node_t *root;
+    pthread_spinlock_t lock;
 } bptree_t;
 
 void bptree_init(bptree_t *tree);
