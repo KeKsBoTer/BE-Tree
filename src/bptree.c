@@ -1,9 +1,12 @@
-#include <string.h>
+#include <stdio.h>
+#include <stdbool.h>
+#include <stdlib.h>
+#include <stdint.h>
 #include "bptree.h"
 
-node *node_create(bool is_leaf)
+node_t *node_create(bool is_leaf)
 {
-    node *n = (node *)aligned_alloc(32, (sizeof(node) + 31) / 32 * 32);
+    node_t *n = aligned_alloc(32, sizeof(node_t));
     n->n = 0;
     n->is_leaf = is_leaf;
     for (int i = 0; i < ORDER - 1; i++)
@@ -13,7 +16,7 @@ node *node_create(bool is_leaf)
 
 #if __AVX2__
 
-inline uint64_t cmp(__m256i x_vec, key_t *y_ptr)
+static inline uint64_t cmp(__m256i x_vec, key_t *y_ptr)
 {
     __m256i y_vec = _mm256_load_si256((__m256i *)y_ptr);
     __m256i mask = _mm256_cmpgt_epi(x_vec, y_vec);
@@ -39,13 +42,9 @@ uint16_t find_index(key_t keys[ORDER - 1], int size, key_t key)
 }
 #endif
 
-value_t *node_get(node *n, key_t key)
+value_t *node_get(node_t *n, key_t key)
 {
-#ifdef __AVX2__
-    __m256i cmp_key = _mm256_set1_epi(key);
-#else
-    key_t cmp_key = key;
-#endif
+    key_cmp_t cmp_key = avx_broadcast(key);
     while (true)
     {
         uint16_t i = find_index(n->keys, n->n, cmp_key);
@@ -67,9 +66,9 @@ value_t *node_get(node *n, key_t key)
     }
 }
 
-void node_split(node *n, uint16_t i, node *child)
+void node_split(node_t *n, uint16_t i, node_t *child)
 {
-    node *right = node_create(child->is_leaf);
+    node_t *right = node_create(child->is_leaf);
     int min_deg = (ORDER + ORDER % 2) / 2;
     // is we split child split value has to be reinserted into right node
     // k makes sure all new values in the node are moved one to the right
@@ -117,13 +116,9 @@ void node_split(node *n, uint16_t i, node *child)
     n->n++;
 }
 
-void node_insert(node *n, key_t key, value_t value)
+void node_insert(node_t *n, key_t key, value_t value)
 {
-#ifdef __AVX2__
-    __m256i cmp_key = _mm256_set1_epi(key);
-#else
-    key_t cmp_key = key;
-#endif
+    key_cmp_t cmp_key = avx_broadcast(key);
     uint16_t i = find_index(n->keys, n->n, cmp_key);
     bool eq = n->keys[i] == key;
     if (n->is_leaf)
@@ -159,31 +154,29 @@ void node_insert(node *n, key_t key, value_t value)
     }
 }
 
-void node_free(node *n)
+void node_free(node_t *n)
 {
     if (!n->is_leaf)
     {
         for (int i = 0; i < n->n + 1; i++)
-        {
             node_free(n->children[i].next);
-        }
     }
     free(n);
 }
 
-void bptree_init(bptree *tree)
+void bptree_init(bptree_t *tree)
 {
     tree->root = NULL;
 }
 
-value_t *bptree_get(bptree *tree, key_t key)
+value_t *bptree_get(bptree_t *tree, key_t key)
 {
     if (__builtin_expect(tree->root == NULL, 0))
         return NULL;
     else
         return node_get(tree->root, key);
 }
-void bptree_insert(bptree *tree, key_t key, value_t value)
+void bptree_insert(bptree_t *tree, key_t key, value_t value)
 {
     if (__builtin_expect(tree->root == NULL, 0))
     {
@@ -196,7 +189,7 @@ void bptree_insert(bptree *tree, key_t key, value_t value)
     {
         if (tree->root->n == ORDER - 1)
         {
-            node *s = node_create(false);
+            node_t *s = node_create(false);
             s->children[0].next = tree->root;
             node_split(s, 0, tree->root);
             int i = 0;
@@ -214,7 +207,7 @@ void bptree_insert(bptree *tree, key_t key, value_t value)
     }
 }
 
-void bptree_free(bptree *tree)
+void bptree_free(bptree_t *tree)
 {
     if (tree->root != NULL)
         node_free(tree->root);

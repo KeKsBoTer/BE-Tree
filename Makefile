@@ -1,24 +1,29 @@
 CC = gcc 
-CFLAGS =  -Wall -m64 -mavx2
+CFLAGS =  -Wall -m64 -mavx2 -mbmi2 -fsanitize=address
 LDFLAGS = -lpthread -lm
-TARGS = bptree_test 
+TARGS = bin/bptree_test 
 
-ifeq ($(mode), debug)
-CFLAGS += -g
-else
-CFLAGS += -O3
-endif
+# ifeq ($(mode), debug)
+CFLAGS+=-g
+# else
+# CFLAGS += -O2
+# endif
 
 all: $(TARGS)
 
-bptree_test: bptree.h bptree.c bptree_test.c
-	$(CC) $(CFLAGS) bptree_test.c bptree.c -o bptree_test  $(LDFLAGS)
+bin/bptree.o: src/bptree.c src/bptree.h
+	$(CC) $(CFLAGS) -c src/bptree.c $(LDFLAGS) && mv *.o bin/
 
-bptree_asm: bptree.h bptree.c
-	$(CC) $(CFLAGS) -S bptree.c -o bptree_test.asm  $(LDFLAGS)
+bin/bptree_test: bin/bptree.o test/bptree_test.c
+	$(CC) $(CFLAGS) -I src bin/bptree.o test/bptree_test.c -o bin/bptree_test $(LDFLAGS)
+
+bptree_asm: src/bptree.h src/bptree.c
+	$(CC) $(CFLAGS) -g -S src/bptree.c -o bptree_test.asm $(LDFLAGS)
+
+.PHONY: clean clean_trees
 
 clean:
-	rm -f *.o bptree_test *.asm 
+	rm -rf  *.dSYM bin/*
 
 clean_trees:
 	rm -f trees/*.dot 

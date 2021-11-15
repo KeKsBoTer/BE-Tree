@@ -1,7 +1,7 @@
-
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <immintrin.h>
 
 #define memcpy_sized(dst, src, n) memcpy(dst, src, (n) * sizeof(*(dst)))
@@ -31,7 +31,7 @@ typedef int16_t key_t;
 #define KEY_T_MAX INT16_MAX
 #define _mm256_cmpgt_epi(a, b) _mm256_cmpgt_epi16(a, b)
 #define _mm256_set1_epi(a) _mm256_set1_epi16(a)
-// #define _mm256_movemask(a) _mm256_movemask_epi8(a) TODO find workaround
+#define _mm256_movemask(a) _pext_u32(_mm256_movemask_epi8(a), 0xAAAAAAAA) // 0xA = 0b1010
 
 #elif KEY_SIZE == 32
 typedef int32_t key_t;
@@ -55,45 +55,52 @@ typedef int64_t key_t;
 
 typedef u_int64_t value_t;
 
-typedef union leaf
-{
-    value_t value;
-    struct node *next;
-} leaf;
+#ifdef __AVX2__
+#define key_cmp_t __m256i
+#define avx_broadcast(a) _mm256_set1_epi(a)
+#else
+#define key_cmp_t key_t
+#define avx_broadcast(a) (a)
+#endif
 
-typedef struct node
+typedef struct node_t
 {
     key_t keys[ORDER - 1];
-    leaf children[ORDER];
+    union
+    {
+        value_t value;
+        struct node_t *next;
+    } children[ORDER];
+
     /** number of keys in node **/
     uint16_t n;
     /** marks node as leaf **/
     bool is_leaf;
-} node;
+} __attribute__((aligned(32))) node_t;
 
-node *node_create(bool is_leaf);
+node_t *node_create(bool is_leaf);
 #if __AVX2__
 uint16_t find_index(key_t keys[ORDER - 1], int size, __m256i key);
 #else
 uint16_t find_index(key_t keys[ORDER - 1], int size, key_t key);
 #endif
 
-value_t *node_get(node *n, key_t key);
+value_t *node_get(node_t *n, key_t key);
 
-void node_split(node *n, uint16_t i, node *child);
+void node_split(node_t *n, uint16_t i, node_t *child);
 
-void node_insert(node *n, key_t key, value_t value);
+void node_insert(node_t *n, key_t key, value_t value);
 
-void node_free(node *n);
-typedef struct bptree
+void node_free(node_t *n);
+typedef struct bptree_t
 {
-    node *root;
-} bptree;
+    node_t *root;
+} bptree_t;
 
-void bptree_init(bptree *tree);
+void bptree_init(bptree_t *tree);
 
-value_t *bptree_get(bptree *tree, key_t key);
+value_t *bptree_get(bptree_t *tree, key_t key);
 
-void bptree_insert(bptree *tree, key_t key, value_t value);
+void bptree_insert(bptree_t *tree, key_t key, value_t value);
 
-void bptree_free(bptree *tree);
+void bptree_free(bptree_t *tree);
