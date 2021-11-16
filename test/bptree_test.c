@@ -54,7 +54,7 @@ int main(int argc, char *argv[])
 
     printf("inserting %d...\n", tests);
 
-    int num_threads = 3;
+    int num_threads = 2;
     pthread_t threads[num_threads];
 
     args_t *args = malloc(sizeof(args_t));

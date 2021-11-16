@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <pthread.h>
+#include <unistd.h>
 #include "bptree.h"
 
 node_t *node_create(bool is_leaf)
@@ -14,7 +15,6 @@ node_t *node_create(bool is_leaf)
     n->is_leaf = is_leaf;
     for (int i = 0; i < ORDER - 1; i++)
         n->keys[i] = KEY_T_MAX;
-    pthread_spin_init(&n->lock, 0);
     return n;
 }
 
@@ -22,7 +22,6 @@ node_t *node_clone(node_t *node)
 {
     node_t *clone = aligned_alloc(32, sizeof(node_t));
     memcpy_sized(clone, node, 1);
-    pthread_spin_init(&clone->lock, 0);
     return clone;
 }
 
@@ -64,8 +63,7 @@ bool node_get(node_t *n, key_t key, value_t *result)
         if (n->is_leaf)
         {
             if (eq)
-                *result = n->children.values[i];
-            pthread_spin_unlock(&n->lock);
+                *result = __atomic_load_n(&n->children.values[i], __ATOMIC_RELAXED);
             return eq;
         }
         else
@@ -73,12 +71,15 @@ bool node_get(node_t *n, key_t key, value_t *result)
             if (eq)
                 i++;
 
-            node_t *next = n->children.nodes[i];
-            pthread_spin_lock(&next->lock);
-            pthread_spin_unlock(&n->lock);
-            n = next;
+            n = __atomic_load_n(&n->children.nodes[i], __ATOMIC_RELAXED);
         }
     }
+}
+
+void delayed_free(void *value)
+{
+    usleep(10);
+    free(value);
 }
 
 void node_split(node_t *n, uint16_t i, node_t *child)
@@ -121,33 +122,33 @@ void node_split(node_t *n, uint16_t i, node_t *child)
     n->n++;
 }
 
-node_t *node_insert(node_t *n, key_t key, value_t value)
+node_t *node_insert(node_t *n, key_t key, value_t value, node_t **free_after)
 {
     key_cmp_t cmp_key = avx_broadcast(key);
     uint16_t i = find_index(n->keys, n->n, cmp_key);
     bool eq = n->keys[i] == key;
     if (n->is_leaf)
     {
-        node_t *n_clone = node_clone(n);
         if (eq)
         {
-            n_clone->children.values[i] = value;
+            __atomic_store_n(&n->children.values[i], value, __ATOMIC_RELAXED);
+            return NULL;
         }
         else
         {
+            node_t *n_clone = node_clone(n);
             // shift values to right an insert
-            memmove_sized(n_clone->keys + i + 1, n_clone->keys + i, n->n - i);
+            memmove_sized(n_clone->keys + i + 1, n_clone->keys + i, n_clone->n - i);
             memmove_sized(n_clone->children.values + i + 1, n_clone->children.values + i, n_clone->n - i);
 
             n_clone->keys[i] = key;
             n_clone->children.values[i] = value;
             n_clone->n++;
+            return n_clone;
         }
-        return n_clone;
     }
     else
     {
-        node_t *n_clone = NULL;
         if (eq)
             i++;
 
@@ -156,34 +157,49 @@ node_t *node_insert(node_t *n, key_t key, value_t value)
         // lock node we are eventually going to split
         // to make sure all possible ongoing insert
         // operations one this node are done
-        pthread_spin_lock(&to_split->lock);
-        bool need_split = to_split->n == ORDER - 1;
-        pthread_spin_unlock(&to_split->lock);
 
-        if (need_split)
+        if (to_split->n == ORDER - 1)
         {
-            n_clone = node_clone(n);
+            node_t *n_clone = node_clone(n);
             node_t *to_split_clone = node_clone(to_split);
+            n_clone->children.nodes[i] = to_split_clone;
+
             node_split(n_clone, i, to_split_clone);
+
             if (n_clone->keys[i] < key)
                 i++;
-            // TODO free to_split
+            node_t *next = n_clone->children.nodes[i];
+
+            if (next != to_split)
+                *free_after = to_split;
+
+            node_t *free_after_2 = NULL;
+            node_t *new_next = node_insert(next, key, value, &free_after_2);
+            if (new_next != NULL)
+            {
+                node_t *old_next = __atomic_exchange_n(&n_clone->children.nodes[i], new_next, __ATOMIC_RELAXED);
+                delayed_free(old_next);
+                if (free_after_2 != NULL)
+                    delayed_free(free_after_2);
+            }
+            return n_clone;
         }
-
-        node_t *next = n->children.nodes[i];
-        pthread_spin_lock(&next->lock);
-
-        if (n_clone == NULL)
-            pthread_spin_unlock(&n->lock);
-
-        node_t *new_next = node_insert(next, key, value);
-        if (new_next != NULL)
+        else
         {
-            node_t *old_next = __atomic_exchange_n(&n->children.nodes[i], new_next, __ATOMIC_RELAXED);
-            pthread_spin_unlock(&next->lock);
-            free(old_next);
+
+            node_t *next = n->children.nodes[i];
+
+            node_t *free_after_2 = NULL;
+            node_t *new_next = node_insert(next, key, value, &free_after_2);
+            if (new_next != NULL)
+            {
+                node_t *old_next = __atomic_exchange_n(&n->children.nodes[i], new_next, __ATOMIC_RELAXED);
+                delayed_free(old_next);
+                if (free_after_2 != NULL)
+                    delayed_free(free_after_2);
+            }
+            return NULL;
         }
-        return n_clone;
     }
 }
 
@@ -205,17 +221,11 @@ void bptree_init(bptree_t *tree)
 
 bool bptree_get(bptree_t *tree, key_t key, value_t *result)
 {
-    pthread_spin_lock(&tree->lock);
     bool found = false;
-    if (tree->root != NULL)
+    node_t *root = __atomic_load_n(&tree->root, __ATOMIC_RELAXED);
+    if (root != NULL)
     {
-        pthread_spin_lock(&tree->root->lock);
-        pthread_spin_unlock(&tree->lock);
-        found = node_get(tree->root, key, result);
-    }
-    else
-    {
-        pthread_spin_unlock(&tree->lock);
+        found = node_get(root, key, result);
     }
     return found;
 }
@@ -230,11 +240,9 @@ void bptree_insert(bptree_t *tree, key_t key, value_t value)
         root->children.values[0] = value;
         root->n = 1;
         __atomic_store_n(&tree->root, root, __ATOMIC_RELAXED);
-        pthread_spin_unlock(&tree->lock);
     }
     else
     {
-        pthread_spin_lock(&tree->root->lock);
         if (tree->root->n == ORDER - 1)
         {
             node_t *s = node_create(false);
@@ -246,27 +254,34 @@ void bptree_insert(bptree_t *tree, key_t key, value_t value)
                 i++;
             node_t *next = s->children.nodes[i];
 
-            node_t *new_next = node_insert(next, key, value);
+            node_t *free_after = NULL;
+            node_t *new_next = node_insert(next, key, value, &free_after);
             if (new_next != NULL)
-                next = new_next;
+            {
+                node_t *old_next = __atomic_exchange_n(&s->children.nodes[i], new_next, __ATOMIC_RELAXED);
+                delayed_free(old_next);
+                if (free_after != NULL)
+                    delayed_free(free_after);
+            }
 
             // Change root
             node_t *old_root = __atomic_exchange_n(&tree->root, s, __ATOMIC_RELAXED);
-            free(old_root);
-            pthread_spin_unlock(&tree->lock);
+            delayed_free(old_root);
         }
         else
         {
-            pthread_spin_unlock(&tree->lock);
-            node_t *new_root = node_insert(tree->root, key, value);
+            node_t *free_after = NULL;
+            node_t *new_root = node_insert(tree->root, key, value, &free_after);
             if (new_root != NULL)
             {
                 node_t *old_root = __atomic_exchange_n(&tree->root, new_root, __ATOMIC_RELAXED);
-                pthread_spin_unlock(&tree->root->lock);
-                free(old_root);
+                delayed_free(old_root);
+                if (free_after != NULL)
+                    delayed_free(free_after);
             }
         }
     }
+    pthread_spin_unlock(&tree->lock);
 }
 
 void bptree_free(bptree_t *tree)

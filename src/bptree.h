@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <pthread.h>
+#include <unistd.h>
 
 #define memcpy_sized(dst, src, n) memcpy(dst, src, (n) * sizeof(*(dst)))
 #define memmove_sized(dst, src, n) memmove(dst, src, (n) * sizeof(*(dst)))
@@ -79,9 +80,6 @@ typedef struct node_t
     /** marks node as leaf **/
     bool is_leaf;
 
-    /** node level lock **/
-    pthread_spinlock_t lock;
-
 } __attribute__((aligned(32))) node_t;
 
 node_t *node_create(bool is_leaf);
@@ -95,7 +93,7 @@ bool node_get(node_t *n, key_t key, value_t *result);
 
 void node_split(node_t *n, uint16_t i, node_t *child);
 
-node_t *node_insert(node_t *n, key_t key, value_t value);
+node_t *node_insert(node_t *n, key_t key, value_t value, node_t **free_after);
 
 void node_free(node_t *n);
 typedef struct bptree_t
