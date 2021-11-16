@@ -70,9 +70,9 @@ typedef struct node_t
     key_t keys[ORDER - 1];
     union
     {
-        value_t value;
-        struct node_t *node;
-    } children[ORDER];
+        value_t values[ORDER];
+        struct node_t *nodes[ORDER];
+    } children;
 
     /** number of keys in node **/
     uint16_t n;
@@ -95,7 +95,7 @@ bool node_get(node_t *n, key_t key, value_t *result);
 
 void node_split(node_t *n, uint16_t i, node_t *child);
 
-void node_insert(node_t *n, key_t key, value_t value);
+node_t *node_insert(node_t *n, key_t key, value_t value);
 
 void node_free(node_t *n);
 typedef struct bptree_t
