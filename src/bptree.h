@@ -91,7 +91,7 @@ uint16_t find_index(key_t keys[ORDER - 1], int size, __m256i key);
 uint16_t find_index(key_t keys[ORDER - 1], int size, key_t key);
 #endif
 
-value_t *node_get(node_t *n, key_t key);
+bool node_get(node_t *n, key_t key, value_t *result);
 
 void node_split(node_t *n, uint16_t i, node_t *child);
 
@@ -106,7 +106,7 @@ typedef struct bptree_t
 
 void bptree_init(bptree_t *tree);
 
-value_t *bptree_get(bptree_t *tree, key_t key);
+bool bptree_get(bptree_t *tree, key_t key, value_t *result);
 
 void bptree_insert(bptree_t *tree, key_t key, value_t value);
 

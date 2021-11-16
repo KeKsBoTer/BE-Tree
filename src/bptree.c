@@ -46,7 +46,7 @@ uint16_t find_index(key_t keys[ORDER - 1], int size, key_t key)
 }
 #endif
 
-value_t *node_get(node_t *n, key_t key)
+bool node_get(node_t *n, key_t key, value_t *result)
 {
     key_cmp_t cmp_key = avx_broadcast(key);
     while (true)
@@ -55,11 +55,10 @@ value_t *node_get(node_t *n, key_t key)
         bool eq = n->keys[i] == key;
         if (n->is_leaf)
         {
-            value_t *result = NULL;
             if (eq)
-                result = &n->children[i].value;
+                *result = n->children[i].value;
             pthread_spin_unlock(&n->lock);
-            return result;
+            return eq;
         }
         else
         {
@@ -176,21 +175,21 @@ void bptree_init(bptree_t *tree)
     pthread_spin_init(&tree->lock, 0);
 }
 
-value_t *bptree_get(bptree_t *tree, key_t key)
+bool bptree_get(bptree_t *tree, key_t key, value_t *result)
 {
     pthread_spin_lock(&tree->lock);
-    value_t *result = NULL;
+    bool found = false;
     if (tree->root != NULL)
     {
         pthread_spin_lock(&tree->root->lock);
         pthread_spin_unlock(&tree->lock);
-        result = node_get(tree->root, key);
+        found = node_get(tree->root, key, result);
     }
     else
     {
         pthread_spin_unlock(&tree->lock);
     }
-    return result;
+    return found;
 }
 void bptree_insert(bptree_t *tree, key_t key, value_t value)
 {
@@ -205,6 +204,7 @@ void bptree_insert(bptree_t *tree, key_t key, value_t value)
     }
     else
     {
+        pthread_spin_lock(&tree->root->lock);
         if (tree->root->n == ORDER - 1)
         {
             node_t *s = node_create(false);
@@ -215,16 +215,19 @@ void bptree_insert(bptree_t *tree, key_t key, value_t value)
                 i++;
             node_t *next = s->children[i].node;
 
-            pthread_spin_lock(&next->lock);
+            if (i != 0)
+                pthread_spin_lock(&next->lock);
             node_insert(next, key, value);
 
+            pthread_spinlock_t *lock = &tree->root->lock;
             // Change root
             tree->root = s;
             pthread_spin_unlock(&tree->lock);
+            if (i != 0)
+                pthread_spin_unlock(lock);
         }
         else
         {
-            pthread_spin_lock(&tree->root->lock);
             pthread_spin_unlock(&tree->lock);
             node_insert(tree->root, key, value);
         }
