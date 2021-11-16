@@ -12,11 +12,6 @@ node_t *node_create(bool is_leaf)
     node_t *n = aligned_alloc(32, sizeof(node_t));
     n->n = 0;
     n->is_leaf = is_leaf;
-    n->children = malloc(sizeof(node_t *) * ORDER);
-    // if (is_leaf)
-    //     printf("alloc values: %p\n", n->children);
-    // else
-    //     printf("alloc children: %p\n", n->children);
     for (int i = 0; i < ORDER - 1; i++)
         n->keys[i] = KEY_T_MAX;
     pthread_spin_init(&n->lock, 0);
@@ -51,7 +46,7 @@ uint16_t find_index(key_t keys[ORDER - 1], int size, key_t key)
 }
 #endif
 
-value_t *node_get(node_t *n, key_t key, pthread_spinlock_t *lock)
+value_t *node_get(node_t *n, key_t key)
 {
     key_cmp_t cmp_key = avx_broadcast(key);
     while (true)
@@ -60,21 +55,21 @@ value_t *node_get(node_t *n, key_t key, pthread_spinlock_t *lock)
         bool eq = n->keys[i] == key;
         if (n->is_leaf)
         {
-            pthread_spin_unlock(lock);
+            value_t *result = NULL;
             if (eq)
-                return &n->children[i].value;
-            else
-                return NULL;
+                result = &n->children[i].value;
+            pthread_spin_unlock(&n->lock);
+            return result;
         }
         else
         {
             if (eq)
                 i++;
 
-            n = n->children[i].node;
-            pthread_spin_lock(&n->lock);
-            pthread_spin_unlock(lock);
-            lock = &n->lock;
+            node_t *next = n->children[i].node;
+            pthread_spin_lock(&next->lock);
+            pthread_spin_unlock(&n->lock);
+            n = next;
         }
     }
 }
@@ -118,9 +113,8 @@ void node_split(node_t *n, uint16_t i, node_t *child)
     n->n++;
 }
 
-void node_insert(node_t *n, key_t key, value_t value, pthread_spinlock_t *lock)
+void node_insert(node_t *n, key_t key, value_t value)
 {
-    pthread_spin_lock(&n->lock);
     key_cmp_t cmp_key = avx_broadcast(key);
     uint16_t i = find_index(n->keys, n->n, cmp_key);
     bool eq = n->keys[i] == key;
@@ -141,8 +135,6 @@ void node_insert(node_t *n, key_t key, value_t value, pthread_spinlock_t *lock)
             n->n++;
         }
         pthread_spin_unlock(&n->lock);
-        if (lock != NULL)
-            pthread_spin_unlock(lock);
     }
     else
     {
@@ -160,12 +152,11 @@ void node_insert(node_t *n, key_t key, value_t value, pthread_spinlock_t *lock)
         pthread_spin_unlock(&to_split->lock);
 
         node_t *next = n->children[i].node;
+
+        pthread_spin_lock(&next->lock);
         pthread_spin_unlock(&n->lock);
 
-        if (lock != NULL)
-            pthread_spin_unlock(lock);
-
-        node_insert(next, key, value, NULL);
+        node_insert(next, key, value);
     }
 }
 
@@ -176,7 +167,6 @@ void node_free(node_t *n)
         for (int i = 0; i < n->n + 1; i++)
             node_free(n->children[i].node);
     }
-    free(n->children);
     free(n);
 }
 
@@ -191,9 +181,15 @@ value_t *bptree_get(bptree_t *tree, key_t key)
     pthread_spin_lock(&tree->lock);
     value_t *result = NULL;
     if (tree->root != NULL)
-        result = node_get(tree->root, key, &tree->lock);
-    else
+    {
+        pthread_spin_lock(&tree->root->lock);
         pthread_spin_unlock(&tree->lock);
+        result = node_get(tree->root, key);
+    }
+    else
+    {
+        pthread_spin_unlock(&tree->lock);
+    }
     return result;
 }
 void bptree_insert(bptree_t *tree, key_t key, value_t value)
@@ -219,7 +215,8 @@ void bptree_insert(bptree_t *tree, key_t key, value_t value)
                 i++;
             node_t *next = s->children[i].node;
 
-            node_insert(next, key, value, NULL);
+            pthread_spin_lock(&next->lock);
+            node_insert(next, key, value);
 
             // Change root
             tree->root = s;
@@ -227,7 +224,9 @@ void bptree_insert(bptree_t *tree, key_t key, value_t value)
         }
         else
         {
-            node_insert(tree->root, key, value, &tree->lock);
+            pthread_spin_lock(&tree->root->lock);
+            pthread_spin_unlock(&tree->lock);
+            node_insert(tree->root, key, value);
         }
     }
 }

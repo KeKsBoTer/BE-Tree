@@ -72,7 +72,7 @@ typedef struct node_t
     {
         value_t value;
         struct node_t *node;
-    } * children;
+    } children[ORDER];
 
     /** number of keys in node **/
     uint16_t n;
@@ -91,11 +91,11 @@ uint16_t find_index(key_t keys[ORDER - 1], int size, __m256i key);
 uint16_t find_index(key_t keys[ORDER - 1], int size, key_t key);
 #endif
 
-value_t *node_get(node_t *n, key_t key, pthread_spinlock_t *lock);
+value_t *node_get(node_t *n, key_t key);
 
 void node_split(node_t *n, uint16_t i, node_t *child);
 
-void node_insert(node_t *n, key_t key, value_t value, pthread_spinlock_t *lock);
+void node_insert(node_t *n, key_t key, value_t value);
 
 void node_free(node_t *n);
 typedef struct bptree_t
