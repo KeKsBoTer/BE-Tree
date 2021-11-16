@@ -54,7 +54,7 @@ int main(int argc, char *argv[])
 
     printf("inserting %d...\n", tests);
 
-    int num_threads = 2;
+    int num_threads = 4;
     pthread_t threads[num_threads];
 
     args_t *args = malloc(sizeof(args_t));
@@ -65,10 +65,12 @@ int main(int argc, char *argv[])
         if (t % 2 == 0)
         {
             pthread_create(threads + t, NULL, rand_insert, args);
+            // pthread_join(threads[t], NULL);
         }
         else
         {
             pthread_create(threads + t, NULL, rand_get, args);
+            // pthread_join(threads[t], NULL);
         }
     }
 

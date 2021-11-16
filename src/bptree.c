@@ -15,6 +15,8 @@ node_t *node_create(bool is_leaf)
     n->is_leaf = is_leaf;
     for (int i = 0; i < ORDER - 1; i++)
         n->keys[i] = KEY_T_MAX;
+    n->rc.cnt = 0;
+    n->rc.node = n;
     return n;
 }
 
@@ -22,7 +24,23 @@ node_t *node_clone(node_t *node)
 {
     node_t *clone = aligned_alloc(32, sizeof(node_t));
     memcpy_sized(clone, node, 1);
+    clone->rc.cnt = 0;
+    clone->rc.node = clone;
     return clone;
+}
+
+static inline node_t *access_node(node_t **node, uint64_t *inc_ops)
+{
+    __atomic_add_fetch(inc_ops, 1, __ATOMIC_RELAXED);
+    node_t *n = *node;
+    __atomic_add_fetch(&n->rc.cnt, 1, __ATOMIC_RELAXED);
+    __atomic_sub_fetch(inc_ops, 1, __ATOMIC_RELAXED);
+    return n;
+}
+
+static inline void exit_node(node_t *node)
+{
+    __atomic_sub_fetch(&node->rc.cnt, 1, __ATOMIC_RELAXED);
 }
 
 #if __AVX2__
@@ -53,7 +71,7 @@ uint16_t find_index(key_t keys[ORDER - 1], int size, key_t key)
 }
 #endif
 
-bool node_get(node_t *n, key_t key, value_t *result)
+bool node_get(node_t *n, key_t key, value_t *result, uint64_t *inc_ops)
 {
     key_cmp_t cmp_key = avx_broadcast(key);
     while (true)
@@ -64,6 +82,7 @@ bool node_get(node_t *n, key_t key, value_t *result)
         {
             if (eq)
                 *result = __atomic_load_n(&n->children.values[i], __ATOMIC_RELAXED);
+            exit_node(n);
             return eq;
         }
         else
@@ -71,15 +90,23 @@ bool node_get(node_t *n, key_t key, value_t *result)
             if (eq)
                 i++;
 
-            n = __atomic_load_n(&n->children.nodes[i], __ATOMIC_RELAXED);
+            node_t *old = n;
+            n = access_node(&n->children.nodes[i], inc_ops);
+            exit_node(old);
         }
     }
 }
 
-void delayed_free(void *value)
+void delayed_free(node_t *node, uint64_t *inc_ops)
 {
-    usleep(10);
-    free(value);
+    uint64_t cnt;
+    do
+    {
+        while (__atomic_load_n(inc_ops, __ATOMIC_RELAXED) > 0)
+            ;
+        cnt = node->rc.cnt;
+    } while (cnt > 0);
+    free(node);
 }
 
 void node_split(node_t *n, uint16_t i, node_t *child)
@@ -122,7 +149,7 @@ void node_split(node_t *n, uint16_t i, node_t *child)
     n->n++;
 }
 
-node_t *node_insert(node_t *n, key_t key, value_t value, node_t **free_after)
+node_t *node_insert(node_t *n, key_t key, value_t value, node_t **free_after, uint64_t *inc_ops)
 {
     key_cmp_t cmp_key = avx_broadcast(key);
     uint16_t i = find_index(n->keys, n->n, cmp_key);
@@ -174,13 +201,13 @@ node_t *node_insert(node_t *n, key_t key, value_t value, node_t **free_after)
                 *free_after = to_split;
 
             node_t *free_after_2 = NULL;
-            node_t *new_next = node_insert(next, key, value, &free_after_2);
+            node_t *new_next = node_insert(next, key, value, &free_after_2, inc_ops);
             if (new_next != NULL)
             {
                 node_t *old_next = __atomic_exchange_n(&n_clone->children.nodes[i], new_next, __ATOMIC_RELAXED);
-                delayed_free(old_next);
+                delayed_free(old_next, inc_ops);
                 if (free_after_2 != NULL)
-                    delayed_free(free_after_2);
+                    delayed_free(free_after_2, inc_ops);
             }
             return n_clone;
         }
@@ -190,13 +217,13 @@ node_t *node_insert(node_t *n, key_t key, value_t value, node_t **free_after)
             node_t *next = n->children.nodes[i];
 
             node_t *free_after_2 = NULL;
-            node_t *new_next = node_insert(next, key, value, &free_after_2);
+            node_t *new_next = node_insert(next, key, value, &free_after_2, inc_ops);
             if (new_next != NULL)
             {
                 node_t *old_next = __atomic_exchange_n(&n->children.nodes[i], new_next, __ATOMIC_RELAXED);
-                delayed_free(old_next);
+                delayed_free(old_next, inc_ops);
                 if (free_after_2 != NULL)
-                    delayed_free(free_after_2);
+                    delayed_free(free_after_2, inc_ops);
             }
             return NULL;
         }
@@ -217,15 +244,16 @@ void bptree_init(bptree_t *tree)
 {
     tree->root = NULL;
     pthread_spin_init(&tree->lock, 0);
+    tree->inc_ops = 0;
 }
 
 bool bptree_get(bptree_t *tree, key_t key, value_t *result)
 {
     bool found = false;
-    node_t *root = __atomic_load_n(&tree->root, __ATOMIC_RELAXED);
-    if (root != NULL)
+    if (tree->root != NULL)
     {
-        found = node_get(root, key, result);
+        node_t *root = access_node(&tree->root, &tree->inc_ops);
+        found = node_get(root, key, result, &tree->inc_ops);
     }
     return found;
 }
@@ -255,29 +283,29 @@ void bptree_insert(bptree_t *tree, key_t key, value_t value)
             node_t *next = s->children.nodes[i];
 
             node_t *free_after = NULL;
-            node_t *new_next = node_insert(next, key, value, &free_after);
+            node_t *new_next = node_insert(next, key, value, &free_after, &tree->inc_ops);
             if (new_next != NULL)
             {
                 node_t *old_next = __atomic_exchange_n(&s->children.nodes[i], new_next, __ATOMIC_RELAXED);
-                delayed_free(old_next);
+                delayed_free(old_next, &tree->inc_ops);
                 if (free_after != NULL)
-                    delayed_free(free_after);
+                    delayed_free(free_after, &tree->inc_ops);
             }
 
             // Change root
             node_t *old_root = __atomic_exchange_n(&tree->root, s, __ATOMIC_RELAXED);
-            delayed_free(old_root);
+            delayed_free(old_root, &tree->inc_ops);
         }
         else
         {
             node_t *free_after = NULL;
-            node_t *new_root = node_insert(tree->root, key, value, &free_after);
+            node_t *new_root = node_insert(tree->root, key, value, &free_after, &tree->inc_ops);
             if (new_root != NULL)
             {
                 node_t *old_root = __atomic_exchange_n(&tree->root, new_root, __ATOMIC_RELAXED);
-                delayed_free(old_root);
+                delayed_free(old_root, &tree->inc_ops);
                 if (free_after != NULL)
-                    delayed_free(free_after);
+                    delayed_free(free_after, &tree->inc_ops);
             }
         }
     }

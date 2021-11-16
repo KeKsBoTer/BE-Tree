@@ -66,6 +66,12 @@ typedef u_int64_t value_t;
 #define avx_broadcast(a) (a)
 #endif
 
+typedef struct rc_ptr_t
+{
+    uint64_t cnt;
+    struct node_t *node;
+} __attribute__((aligned(32))) rc_ptr_t;
+
 typedef struct node_t
 {
     key_t keys[ORDER - 1];
@@ -79,7 +85,7 @@ typedef struct node_t
     uint16_t n;
     /** marks node as leaf **/
     bool is_leaf;
-
+    rc_ptr_t rc;
 } __attribute__((aligned(32))) node_t;
 
 node_t *node_create(bool is_leaf);
@@ -89,17 +95,18 @@ uint16_t find_index(key_t keys[ORDER - 1], int size, __m256i key);
 uint16_t find_index(key_t keys[ORDER - 1], int size, key_t key);
 #endif
 
-bool node_get(node_t *n, key_t key, value_t *result);
+bool node_get(node_t *n, key_t key, value_t *result, uint64_t *inc_ops);
 
 void node_split(node_t *n, uint16_t i, node_t *child);
 
-node_t *node_insert(node_t *n, key_t key, value_t value, node_t **free_after);
+node_t *node_insert(node_t *n, key_t key, value_t value, node_t **free_after, uint64_t *inc_ops);
 
 void node_free(node_t *n);
 typedef struct bptree_t
 {
     node_t *root;
     pthread_spinlock_t lock;
+    uint64_t inc_ops;
 } bptree_t;
 
 void bptree_init(bptree_t *tree);
