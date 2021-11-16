@@ -15,8 +15,7 @@ node_t *node_create(bool is_leaf)
     n->is_leaf = is_leaf;
     for (int i = 0; i < ORDER - 1; i++)
         n->keys[i] = KEY_T_MAX;
-    n->rc.cnt = 0;
-    n->rc.node = n;
+    n->rc_cnt = 0;
     return n;
 }
 
@@ -24,8 +23,7 @@ node_t *node_clone(node_t *node)
 {
     node_t *clone = aligned_alloc(32, sizeof(node_t));
     memcpy_sized(clone, node, 1);
-    clone->rc.cnt = 0;
-    clone->rc.node = clone;
+    clone->rc_cnt = 0;
     return clone;
 }
 
@@ -33,14 +31,14 @@ static inline node_t *access_node(node_t **node, uint64_t *inc_ops)
 {
     __atomic_add_fetch(inc_ops, 1, __ATOMIC_RELAXED);
     node_t *n = *node;
-    __atomic_add_fetch(&n->rc.cnt, 1, __ATOMIC_RELAXED);
+    __atomic_add_fetch(&n->rc_cnt, 1, __ATOMIC_RELAXED);
     __atomic_sub_fetch(inc_ops, 1, __ATOMIC_RELAXED);
     return n;
 }
 
 static inline void exit_node(node_t *node)
 {
-    __atomic_sub_fetch(&node->rc.cnt, 1, __ATOMIC_RELAXED);
+    __atomic_sub_fetch(&node->rc_cnt, 1, __ATOMIC_RELAXED);
 }
 
 #if __AVX2__
@@ -99,13 +97,13 @@ bool node_get(node_t *n, key_t key, value_t *result, uint64_t *inc_ops)
 
 void delayed_free(node_t *node, uint64_t *inc_ops)
 {
-    uint64_t cnt;
     do
     {
+        // wait until all reference counter operations are done
         while (__atomic_load_n(inc_ops, __ATOMIC_RELAXED) > 0)
             ;
-        cnt = node->rc.cnt;
-    } while (cnt > 0);
+        // wait until reference counter of node is done to zero
+    } while (__atomic_load_n(&node->rc_cnt, __ATOMIC_RELAXED) > 0);
     free(node);
 }
 

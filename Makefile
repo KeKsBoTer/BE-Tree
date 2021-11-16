@@ -1,5 +1,5 @@
 CC = gcc 
-CFLAGS =  -Wall -m64 -mavx2 -mbmi2 #-fsanitize=address
+CFLAGS =  -Wall -m64 -mbmi2 -mavx2 #-fsanitize=address
 LDFLAGS = -lpthread -lm
 TARGS = bin/bptree_test 
 

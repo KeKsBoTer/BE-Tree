@@ -368,9 +368,9 @@ int main(int argc, char **argv)
 
     /* Third round (ALL thread/2) */
 
-    printf("\n\nThird round of benchmark, ALL (%ld) thread\n\n", num_threads);
+    printf("\n\nThird round of benchmark, ALL/2 (%ld) thread\n\n", num_threads / 2);
 
-    for (t = 0; t < num_threads; t++)
+    for (t = 0; t < num_threads / 2; t++)
     {
         tp[t].queries = queries + t * (num_queries / num_threads);
         tp[t].tid = t;
@@ -390,7 +390,7 @@ int main(int argc, char **argv)
     signal(SIGALRM, trigger);
     alarm(duration);
 
-    for (t = 0; t < num_threads; t++)
+    for (t = 0; t < num_threads / 2; t++)
     {
         void *status;
         int rc = pthread_join(threads[t], &status);
@@ -416,6 +416,8 @@ int main(int argc, char **argv)
 
     printf("total_time = %.2f\n", result.grand_total_time);
     printf("total_tput = %.2f\n", (float)(result.total_gets + result.total_puts) / result.grand_total_time);
+    printf("total_tput_get = %.2f\n", (float)(result.total_gets) / result.grand_total_time);
+    printf("total_tput_insert = %.2f\n", (float)(result.total_puts) / result.grand_total_time);
     printf("total_hitratio = %.4f\n", (float)result.total_hits / result.total_gets);
 
     free(queries);

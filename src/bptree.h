@@ -66,12 +66,6 @@ typedef u_int64_t value_t;
 #define avx_broadcast(a) (a)
 #endif
 
-typedef struct rc_ptr_t
-{
-    uint64_t cnt;
-    struct node_t *node;
-} __attribute__((aligned(32))) rc_ptr_t;
-
 typedef struct node_t
 {
     key_t keys[ORDER - 1];
@@ -81,11 +75,15 @@ typedef struct node_t
         struct node_t *nodes[ORDER];
     } children;
 
+    // reference counting counter
+    // number of get operations that currently
+    // access this node
+    uint64_t rc_cnt;
+
     /** number of keys in node **/
     uint16_t n;
     /** marks node as leaf **/
     bool is_leaf;
-    rc_ptr_t rc;
 } __attribute__((aligned(32))) node_t;
 
 node_t *node_create(bool is_leaf);
