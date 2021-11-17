@@ -1,28 +1,41 @@
-/* dummy key-value storage */
-
-#include <stdlib.h>
-#include <signal.h>
+#define _GNU_SOURCE
+#include <getopt.h>
+#include <math.h>
+#include <time.h>
+#include <sys/time.h>
+#include <sys/mman.h>
+#include <sched.h>
 #include <pthread.h>
+
+#include <stdio.h>
 #include <unistd.h>
-#include "dummy-keystore.h"
+#include <sys/types.h>
 
-int LOOP_GET = 1000;
-int LOOP_SET = 10000;
+#include <assert.h>
+#include <string.h>
+#include <stdlib.h>
+#include <errno.h>
 
-/* START POET & HEARTBEAT */
-
-// HB Interval (in useconds)
-#define HB_INTERVAL 10000
-int stop_heartbeat = 0;
-pthread_t hb_thread_handler;
+#include <inttypes.h>
+#include <signal.h>
 
 #define HB_ENERGY_IMPL
 #include <heartbeats/hb-energy.h>
-#include <heartbeats/heartbeat-accuracy-power.h>
+#include <heartbeats/heartbeat-accuracy.h>
 #include <poet/poet.h>
 #include <poet/poet_config.h>
 
-#define PREFIX "DUMMYKEY"
+#include "db.h"
+#include "bptree.h"
+
+// POET / HEARBEAT related stuff
+
+#define PREFIX "BPTREE"
+
+// HB Interval (in useconds)
+#define HB_INTERVAL 10000
+bool stop_heartbeat = false;
+pthread_t hb_thread_handler;
 
 #define USE_POET // Power and performance control
 
@@ -30,11 +43,9 @@ heartbeat_t *heart;
 poet_state *state;
 static poet_control_state_t *control_states;
 static poet_cpu_state_t *cpu_states;
-unsigned int num_runs = 1000;
 
 void *heartbeat_timer_thread()
 {
-
     int i = 0;
     while (!stop_heartbeat)
     {
@@ -46,6 +57,7 @@ void *heartbeat_timer_thread()
         i++;
         usleep(HB_INTERVAL);
     }
+    return NULL;
 }
 
 void hb_poet_init()
@@ -137,15 +149,10 @@ void hb_poet_finish()
     heartbeat_finish(heart);
     printf("heartbeat finished\n");
 }
-/* END POET AND HEARTBEAT */
-
-char *dummydata = "This is a dummy data!";
 
 /* create a dummy data structure */
-db_t *db_new()
+bptree_t *db_new()
 {
-    /* init runtime control (e.g., POET) */
-
     hb_poet_init();
 
     pthread_attr_t attr;
@@ -158,49 +165,29 @@ db_t *db_new()
         perror("failed: HB thread create\n");
         exit(-1);
     }
+    bptree_t *bptree = malloc(sizeof(bptree_t));
+    bptree_init(bptree);
 
-    return (db_t *)malloc(sizeof(int));
+    return bptree;
 }
 
 /* wrapper of set command */
-int db_put(db_t *db_data, char *key, char *val)
+int db_put(bptree_t *bptree, key_t key, value_t val)
 {
-
-    volatile int dummy = 0;
-    int j;
-
-    /*insert loop*/
-    for (j = 0; j < LOOP_SET; j++)
-    {
-        dummy = dummy >> 1;
-        dummy = dummy - 1;
-    }
-
+    bptree_insert(bptree, key, val);
     return 1;
 }
 
 /* wrapper of get command */
-char *db_get(db_t *db_data, char *key)
+bool db_get(bptree_t *bptree, key_t key, value_t *result)
 {
-
-    volatile int dummy = 0;
-    int j;
-
-    /*get loop*/
-    for (j = 0; j < LOOP_GET; j++)
-    {
-        dummy = dummy >> 1;
-        dummy = dummy - 1;
-    }
-
-    return dummydata;
+    return bptree_get(bptree, key, result);
 }
 
 /* wrapper of free command */
-int db_free(db_t *db_data)
+int db_free(bptree_t *bptree)
 {
-
-    stop_heartbeat = 1;
+    stop_heartbeat = true;
 
     int rc = pthread_join(hb_thread_handler, NULL);
     if (rc)
@@ -211,8 +198,8 @@ int db_free(db_t *db_data)
 
     hb_poet_finish();
 
-    /*free*/
-    //free(db_data);
+    bptree_free(bptree);
+    free(bptree);
 
     return 0;
 }

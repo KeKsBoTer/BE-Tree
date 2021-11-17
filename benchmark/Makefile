@@ -1,10 +1,18 @@
-all: bench_client
+CC = gcc 
+CFLAGS = -g -Wall
+LDFLAGS = -lpthread -lm -lpoet -lhb-acc-pow-shared -lhb-energy-msr -lm
 
-bench_client: bench_client.o ../bin/bptree.o 
-	gcc -g  -I ../src -o bench_client bench_client.o ../bin/bptree.o -lpthread -lm
+INCLUDE = -I ../include -I ./include 
 
-bench_client.o: bench_client.c
-	gcc -g -I ../src -c bench_client.c 
+all: bin/bench_client
 
+bin/db.o: src/db.c
+	$(CC) $(CFLAGS) $(INCLUDE) -c src/db.c -o bin/db.o
+
+bin/bench_client.o: src/bench_client.c
+	$(CC) $(CFLAGS) $(INCLUDE) -c src/bench_client.c -o bin/bench_client.o
+
+bin/bench_client: bin/db.o bin/bench_client.o ../bin/bptree.o 
+	$(CC) $(CFLAGS) $(INCLUDE) bin/db.o bin/bench_client.o ../bin/bptree.o -o bin/bench_client $(LDFLAGS)
 clean:
-	-rm *.o bench_client
+	rm -rf bin/*

@@ -1,5 +1,5 @@
 CC = gcc 
-CFLAGS =  -Wall -m64 -mbmi2 -mavx2 #-fsanitize=address
+CFLAGS =  -Wall -m64 -mbmi2 -mavx2
 LDFLAGS = -lpthread -lm
 TARGS = bin/bptree_test 
 
@@ -11,13 +11,13 @@ CFLAGS+=-g
 
 all: $(TARGS)
 
-bin/bptree.o: src/bptree.c src/bptree.h
-	$(CC) $(CFLAGS) -c src/bptree.c $(LDFLAGS) && mv *.o bin/
+bin/bptree.o: include/bptree.h src/bptree.c 
+	$(CC) $(CFLAGS) -I ./include -c src/bptree.c $(LDFLAGS) && mv *.o bin/
 
 bin/bptree_test: bin/bptree.o test/bptree_test.c
-	$(CC) $(CFLAGS) -I src bin/bptree.o test/bptree_test.c -o bin/bptree_test $(LDFLAGS)
+	$(CC) $(CFLAGS) -I ./include bin/bptree.o test/bptree_test.c -o bin/bptree_test $(LDFLAGS)
 
-bptree_asm: src/bptree.h src/bptree.c
+bptree_asm: include/bptree.h src/bptree.c
 	$(CC) $(CFLAGS) -g -S src/bptree.c -o bptree_test.asm $(LDFLAGS)
 
 .PHONY: clean clean_trees

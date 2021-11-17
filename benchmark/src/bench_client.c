@@ -1,6 +1,5 @@
 #define _GNU_SOURCE
 #include <getopt.h>
-#include <unistd.h>
 #include <math.h>
 #include <time.h>
 #include <sys/time.h>
@@ -9,23 +8,20 @@
 #include <pthread.h>
 
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <unistd.h>
 #include <sys/types.h>
 
 #include <assert.h>
-#include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
-#include <stdio.h>
 #include <errno.h>
 
 #include <inttypes.h>
 #include <signal.h>
 
-#include "bptree.h"
 #include "bench_common.h"
+#include "db.h"
+#include "bptree.h"
 
 pthread_mutex_t printmutex;
 
@@ -47,7 +43,7 @@ static size_t key_len;
 static size_t val_len;
 static size_t num_queries;
 static size_t num_threads = 1;
-static size_t num_mget = 1;
+// static size_t num_mget = 1;
 static float duration = 10.0;
 static char *inputfile = NULL;
 
@@ -153,13 +149,13 @@ static void *queries_exec(void *param)
             key_t key = *((key_t *)queries[i].hashed_key);
             if (type == query_put)
             {
-                bptree_insert(db_data, key, (value_t)key);
+                db_put(db_data, key, (value_t)key);
                 p->num_puts++;
             }
             else if (type == query_get)
             {
                 value_t val;
-                bool found = bptree_get(db_data, key, &val);
+                bool found = db_get(db_data, key, &val);
                 p->num_gets++;
                 if (!found)
                 {
@@ -261,8 +257,7 @@ int main(int argc, char **argv)
     size_t t;
     thread_param tp[num_threads];
 
-    db_data = malloc(sizeof(bptree_t));
-    bptree_init(db_data);
+    db_data = db_new();
 
     /* First round (ALL THREADS) */
 
@@ -412,7 +407,7 @@ int main(int argc, char **argv)
 
     /* End of second round */
 
-    bptree_free(db_data);
+    db_free(db_data);
 
     printf("total_time = %.2f\n", result.grand_total_time);
     printf("total_tput = %.2f\n", (float)(result.total_gets + result.total_puts) / result.grand_total_time);

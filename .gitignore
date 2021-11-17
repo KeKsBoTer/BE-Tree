@@ -6,3 +6,4 @@
 bptree_test
 benchmark/*.log
 benchmark/bench_client
+benchmark/bin/*
