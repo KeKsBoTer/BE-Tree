@@ -30,7 +30,7 @@ void *rand_get(void *args)
         bool found = bptree_get(t_args->tree, x, &v);
         if (found && x != v)
         {
-            printf("ERROR: %d != %ld\n", x, v);
+            printf("ERROR: %d != %lld\n", x, v);
         }
     }
     return NULL;
@@ -38,7 +38,7 @@ void *rand_get(void *args)
 
 int main(int argc, char *argv[])
 {
-    int tests = 10;
+    int tests = 1000;
     switch (argc)
     {
     case 2:
@@ -49,27 +49,37 @@ int main(int argc, char *argv[])
             exit(1);
         }
     }
+
     bptree_t *tree = malloc(sizeof(bptree_t));
     bptree_init(tree);
 
-    printf("inserting %d...\n", tests);
+    float insert_ratio = 0.05;
 
     int num_threads = 4;
     pthread_t threads[num_threads];
 
-    args_t *args = malloc(sizeof(args_t));
-    args->tests = tests;
-    args->tree = tree;
+    args_t *args_insert = malloc(sizeof(args_t));
+    args_insert->tests = (int)(tests * insert_ratio);
+    args_insert->tree = tree;
+
+    printf("inserting %d...\n", (int)(tests * insert_ratio));
+
+    args_t *args_get = malloc(sizeof(args_t));
+    args_get->tests = (int)(tests * (1 - insert_ratio));
+    args_get->tree = tree;
+
+    printf("retrieving %d...\n", (int)(tests * (1 - insert_ratio)));
+
     for (int t = 0; t < num_threads; t++)
     {
         if (t % 2 == 0)
         {
-            pthread_create(threads + t, NULL, rand_insert, args);
+            pthread_create(threads + t, NULL, rand_insert, args_insert);
             // pthread_join(threads[t], NULL);
         }
         else
         {
-            pthread_create(threads + t, NULL, rand_get, args);
+            pthread_create(threads + t, NULL, rand_get, args_get);
             // pthread_join(threads[t], NULL);
         }
     }
@@ -79,6 +89,7 @@ int main(int argc, char *argv[])
 
     printf("done!\n");
     bptree_free(tree);
-    free(args);
+    free(args_get);
+    free(args_insert);
     free(tree);
 }

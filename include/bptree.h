@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <pthread.h>
 #include <unistd.h>
+#include "spinlock.h"
 
 #define memcpy_sized(dst, src, n) memcpy(dst, src, (n) * sizeof(*(dst)))
 #define memmove_sized(dst, src, n) memmove(dst, src, (n) * sizeof(*(dst)))

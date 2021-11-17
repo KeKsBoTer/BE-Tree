@@ -7,8 +7,12 @@
 #include <pthread.h>
 #include <unistd.h>
 #include "bptree.h"
+#include "spinlock.h"
 
-node_t *node_create(bool is_leaf)
+//#define SECURE_ACCESS
+
+node_t *
+node_create(bool is_leaf)
 {
     node_t *n = aligned_alloc(32, sizeof(node_t));
     n->n = 0;
@@ -29,10 +33,14 @@ node_t *node_clone(node_t *node)
 
 static inline node_t *access_node(node_t **node, uint64_t *inc_ops)
 {
-    __atomic_add_fetch(inc_ops, 1, __ATOMIC_RELAXED);
+#ifdef SECURE_ACCESS
+    __atomic_fetch_add(inc_ops, 1, __ATOMIC_RELAXED);
+#endif
     node_t *n = *node;
-    __atomic_add_fetch(&n->rc_cnt, 1, __ATOMIC_RELAXED);
-    __atomic_sub_fetch(inc_ops, 1, __ATOMIC_RELAXED);
+    __atomic_fetch_add(&n->rc_cnt, 1, __ATOMIC_RELAXED);
+#ifdef SECURE_ACCESS
+    __atomic_fetch_sub(inc_ops, 1, __ATOMIC_RELAXED);
+#endif
     return n;
 }
 
@@ -99,9 +107,11 @@ void delayed_free(node_t *node, uint64_t *inc_ops)
 {
     do
     {
+#ifdef SECURE_ACCESS
         // wait until all reference counter operations are done
         while (__atomic_load_n(inc_ops, __ATOMIC_RELAXED) > 0)
             ;
+#endif
         // wait until reference counter of node is done to zero
     } while (__atomic_load_n(&node->rc_cnt, __ATOMIC_RELAXED) > 0);
     free(node);

@@ -1,4 +1,4 @@
-CC = gcc 
+CC = gcc-11 
 CFLAGS =  -Wall -m64 -mbmi2 -mavx2
 LDFLAGS = -lpthread -lm
 TARGS = bin/bptree_test 
@@ -6,7 +6,7 @@ TARGS = bin/bptree_test
 # ifeq ($(mode), debug)
 CFLAGS+=-g
 # else
-# CFLAGS += -O2
+#CFLAGS += -O2
 # endif
 
 all: $(TARGS)
