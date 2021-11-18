@@ -9,10 +9,7 @@
 #include "bptree.h"
 #include "spinlock.h"
 
-//#define SECURE_ACCESS
-
-node_t *
-node_create(bool is_leaf)
+node_t *node_create(bool is_leaf)
 {
     node_t *n = aligned_alloc(32, sizeof(node_t));
     n->n = 0;
@@ -31,14 +28,14 @@ node_t *node_clone(node_t *node)
     return clone;
 }
 
-static inline node_t *access_node(node_t **node, uint64_t *inc_ops)
+static inline node_t *node_access(node_t **node, uint64_t *inc_ops)
 {
-#ifdef SECURE_ACCESS
+#ifdef BPTREE_SECURE_NODE_ACCESS
     __atomic_fetch_add(inc_ops, 1, __ATOMIC_RELAXED);
 #endif
     node_t *n = *node;
     __atomic_fetch_add(&n->rc_cnt, 1, __ATOMIC_RELAXED);
-#ifdef SECURE_ACCESS
+#ifdef BPTREE_SECURE_NODE_ACCESS
     __atomic_fetch_sub(inc_ops, 1, __ATOMIC_RELAXED);
 #endif
     return n;
@@ -97,7 +94,7 @@ bool node_get(node_t *n, key_t key, value_t *result, uint64_t *inc_ops)
                 i++;
 
             node_t *old = n;
-            n = access_node(&n->children.nodes[i], inc_ops);
+            n = node_access(&n->children.nodes[i], inc_ops);
             exit_node(old);
         }
     }
@@ -107,7 +104,7 @@ void delayed_free(node_t *node, uint64_t *inc_ops)
 {
     do
     {
-#ifdef SECURE_ACCESS
+#ifdef BPTREE_SECURE_NODE_ACCESS
         // wait until all reference counter operations are done
         while (__atomic_load_n(inc_ops, __ATOMIC_RELAXED) > 0)
             ;
@@ -260,7 +257,7 @@ bool bptree_get(bptree_t *tree, key_t key, value_t *result)
     bool found = false;
     if (tree->root != NULL)
     {
-        node_t *root = access_node(&tree->root, &tree->inc_ops);
+        node_t *root = node_access(&tree->root, &tree->inc_ops);
         found = node_get(root, key, result, &tree->inc_ops);
     }
     return found;

@@ -30,7 +30,7 @@ void *rand_get(void *args)
         bool found = bptree_get(t_args->tree, x, &v);
         if (found && x != v)
         {
-            printf("ERROR: %d != %lld\n", x, v);
+            printf("ERROR: %d != %ld\n", x, v);
         }
     }
     return NULL;

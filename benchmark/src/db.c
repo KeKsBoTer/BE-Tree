@@ -32,11 +32,6 @@
 
 #define PREFIX "BPTREE"
 
-// HB Interval (in useconds)
-#define HB_INTERVAL 10000
-bool stop_heartbeat = false;
-pthread_t hb_thread_handler;
-
 #define USE_POET // Power and performance control
 
 heartbeat_t *heart;
@@ -44,21 +39,7 @@ poet_state *state;
 static poet_control_state_t *control_states;
 static poet_cpu_state_t *cpu_states;
 
-void *heartbeat_timer_thread()
-{
-    int i = 0;
-    while (!stop_heartbeat)
-    {
-
-        heartbeat_acc(heart, i, 1);
-#ifdef USE_POET
-        poet_apply_control(state);
-#endif
-        i++;
-        usleep(HB_INTERVAL);
-    }
-    return NULL;
-}
+int heartbeats_counter;
 
 void hb_poet_init()
 {
@@ -68,9 +49,11 @@ void hb_poet_init()
     double power_target;
     unsigned int nstates;
 
+    heartbeats_counter = 0;
+
     if (getenv(PREFIX "_MIN_HEART_RATE") == NULL)
     {
-        min_heartrate = 0.0;
+        min_heartrate = 300.0;
     }
     else
     {
@@ -78,7 +61,7 @@ void hb_poet_init()
     }
     if (getenv(PREFIX "_MAX_HEART_RATE") == NULL)
     {
-        max_heartrate = 100.0;
+        max_heartrate = 400.0;
     }
     else
     {
@@ -86,7 +69,7 @@ void hb_poet_init()
     }
     if (getenv(PREFIX "_WINDOW_SIZE") == NULL)
     {
-        window_size = 30;
+        window_size = 100;
     }
     else
     {
@@ -94,7 +77,7 @@ void hb_poet_init()
     }
     if (getenv(PREFIX "_POWER_TARGET") == NULL)
     {
-        power_target = 70;
+        power_target = 10;
     }
     else
     {
@@ -155,16 +138,6 @@ bptree_t *db_new()
 {
     hb_poet_init();
 
-    pthread_attr_t attr;
-    pthread_attr_init(&attr);
-    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
-
-    int rc = pthread_create(&hb_thread_handler, &attr, heartbeat_timer_thread, NULL);
-    if (rc)
-    {
-        perror("failed: HB thread create\n");
-        exit(-1);
-    }
     bptree_t *bptree = malloc(sizeof(bptree_t));
     bptree_init(bptree);
 
@@ -174,6 +147,12 @@ bptree_t *db_new()
 /* wrapper of set command */
 int db_put(bptree_t *bptree, key_t key, value_t val)
 {
+    if (heartbeats_counter % 10000 == 0)
+    {
+        heartbeat_acc(heart, heartbeats_counter, 1);
+        poet_apply_control(state);
+    }
+    heartbeats_counter++;
     bptree_insert(bptree, key, val);
     return 1;
 }
@@ -181,21 +160,18 @@ int db_put(bptree_t *bptree, key_t key, value_t val)
 /* wrapper of get command */
 bool db_get(bptree_t *bptree, key_t key, value_t *result)
 {
+    if (heartbeats_counter % 10000 == 0)
+    {
+        heartbeat_acc(heart, heartbeats_counter, 1);
+        poet_apply_control(state);
+    }
+    heartbeats_counter++;
     return bptree_get(bptree, key, result);
 }
 
 /* wrapper of free command */
 int db_free(bptree_t *bptree)
 {
-    stop_heartbeat = true;
-
-    int rc = pthread_join(hb_thread_handler, NULL);
-    if (rc)
-    {
-        perror("error, pthread_join\n");
-        exit(-1);
-    }
-
     hb_poet_finish();
 
     bptree_free(bptree);

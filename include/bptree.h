@@ -68,6 +68,8 @@ typedef u_int64_t value_t;
 #define avx_broadcast(a) (a)
 #endif
 
+//#define BPTREE_SECURE_NODE_ACCESS
+
 typedef struct node_t
 {
     key_t keys[ORDER - 1];
@@ -80,7 +82,7 @@ typedef struct node_t
     // reference counting counter
     // number of get operations that currently
     // access this node
-    uint64_t rc_cnt;
+    uint64_t __attribute__((aligned(8))) rc_cnt;
 
     /** number of keys in node **/
     uint16_t n;
@@ -106,7 +108,7 @@ typedef struct bptree_t
 {
     node_t *root;
     pthread_spinlock_t lock;
-    uint64_t inc_ops;
+    uint64_t __attribute__((aligned(8))) inc_ops;
 } bptree_t;
 
 void bptree_init(bptree_t *tree);
