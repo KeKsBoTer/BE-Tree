@@ -1,26 +1,9 @@
 #ifndef _BENCH_COMMON_H_
 #define _BENCH_COMMON_H_
 
-#include "bench_config.h"
-
-/* type of each query */
-enum query_types{
-    query_put=0,
-    query_get,
-    query_del,
-};
-
-/* 
- * format of each query, it has a key and a type and we don't care
- * the value
- */
-typedef struct __attribute__((__packed__)) {
-    char hashed_key[NKEY];
-    char type;
-} query;
-
 /* bench result */
-typedef struct __attribute__((__packed__)) {
+typedef struct __attribute__((__packed__))
+{
     double grand_total_time;
     double total_tput;
     double total_time;

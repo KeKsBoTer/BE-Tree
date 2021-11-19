@@ -28,7 +28,7 @@
 #include "bptree.h"
 
 /* create a dummy data structure */
-bptree_t *db_new();
+bptree_t *db_new(const char *poet_log_name, const char *heartbeats_log_name, bool use_poet);
 
 /* wrapper of set command */
 int db_put(bptree_t *bptree, key_t key, value_t val);

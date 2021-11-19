@@ -32,56 +32,31 @@
 
 #define PREFIX "BPTREE"
 
-#define USE_POET // Power and performance control
-
 heartbeat_t *heart;
 poet_state *state;
+
 static poet_control_state_t *control_states;
 static poet_cpu_state_t *cpu_states;
 
 int heartbeats_counter;
 
-void hb_poet_init()
-{
-    float min_heartrate;
-    float max_heartrate;
-    int window_size;
-    double power_target;
-    unsigned int nstates;
+bool use_poet = false;
 
+void hb_poet_init(const char *poet_log_name, const char *heartbeats_log_name, bool _use_poet)
+{
+    use_poet = _use_poet;
+    float target_heartrate = 300.0;
+    int window_size = 10;
     heartbeats_counter = 0;
 
-    if (getenv(PREFIX "_MIN_HEART_RATE") == NULL)
+    if (getenv(PREFIX "_TARGET_HEART_RATE") != NULL)
     {
-        min_heartrate = 300.0;
+        target_heartrate = atof(getenv(PREFIX "_TARGET_HEART_RATE"));
     }
-    else
-    {
-        min_heartrate = atof(getenv(PREFIX "_MIN_HEART_RATE"));
-    }
-    if (getenv(PREFIX "_MAX_HEART_RATE") == NULL)
-    {
-        max_heartrate = 400.0;
-    }
-    else
-    {
-        max_heartrate = atof(getenv(PREFIX "_MAX_HEART_RATE"));
-    }
-    if (getenv(PREFIX "_WINDOW_SIZE") == NULL)
-    {
-        window_size = 100;
-    }
-    else
+
+    if (getenv(PREFIX "_WINDOW_SIZE") != NULL)
     {
         window_size = atoi(getenv(PREFIX "_WINDOW_SIZE"));
-    }
-    if (getenv(PREFIX "_POWER_TARGET") == NULL)
-    {
-        power_target = 10;
-    }
-    else
-    {
-        power_target = atof(getenv(PREFIX "_POWER_TARGET"));
     }
 
     if (getenv("HEARTBEAT_ENABLED_DIR") == NULL)
@@ -90,53 +65,60 @@ void hb_poet_init()
         exit(1);
     }
 
-    printf("init heartbeat with %f %f %d\n", min_heartrate, max_heartrate, window_size);
+    printf("init heartbeat with %f %d\n", target_heartrate, window_size);
 
-    heart = heartbeat_acc_pow_init(window_size, 100, "heartbeat.log",
-                                   min_heartrate, max_heartrate,
+    heart = heartbeat_acc_pow_init(window_size,
+                                   100, heartbeats_log_name,
+                                   // min and max target rate is the same
+                                   target_heartrate, target_heartrate,
                                    0, 100,
-                                   1, hb_energy_impl_alloc(), power_target, power_target);
+                                   1, hb_energy_impl_alloc(),
+                                   10, 10);
     if (heart == NULL)
     {
         fprintf(stderr, "Failed to init heartbeat.\n");
         exit(1);
     }
-#ifdef USE_POET
-    if (get_control_states("config/control_config", &control_states, &nstates))
+    if (use_poet)
     {
-        fprintf(stderr, "Failed to load control states.\n");
-        exit(1);
+        unsigned int nstates;
+
+        if (get_control_states("config/control_config", &control_states, &nstates))
+        {
+            fprintf(stderr, "Failed to load control states.\n");
+            exit(1);
+        }
+        if (get_cpu_states("config/cpu_config", &cpu_states, &nstates))
+        {
+            fprintf(stderr, "Failed to load cpu states.\n");
+            exit(1);
+        }
+        state = poet_init(heart, nstates, control_states, cpu_states, &apply_cpu_config, &get_current_cpu_state, 1, poet_log_name);
+        if (state == NULL)
+        {
+            fprintf(stderr, "Failed to init poet.\n");
+            exit(1);
+        }
     }
-    if (get_cpu_states("config/cpu_config", &cpu_states, &nstates))
-    {
-        fprintf(stderr, "Failed to load cpu states.\n");
-        exit(1);
-    }
-    state = poet_init(heart, nstates, control_states, cpu_states, &apply_cpu_config, &get_current_cpu_state, 1, "poet.log");
-    if (state == NULL)
-    {
-        fprintf(stderr, "Failed to init poet.\n");
-        exit(1);
-    }
-#endif
     printf("heartbeat init'd\n");
 }
 
 void hb_poet_finish()
 {
-#ifdef USE_POET
-    poet_destroy(state);
-    free(control_states);
-    free(cpu_states);
-#endif
+    if (use_poet)
+    {
+        poet_destroy(state);
+        free(control_states);
+        free(cpu_states);
+    }
     heartbeat_finish(heart);
     printf("heartbeat finished\n");
 }
 
 /* create a dummy data structure */
-bptree_t *db_new()
+bptree_t *db_new(const char *poet_log_name, const char *heartbeats_log_name, bool use_poet)
 {
-    hb_poet_init();
+    hb_poet_init(poet_log_name, heartbeats_log_name, use_poet);
 
     bptree_t *bptree = malloc(sizeof(bptree_t));
     bptree_init(bptree);
@@ -144,15 +126,21 @@ bptree_t *db_new()
     return bptree;
 }
 
-/* wrapper of set command */
-int db_put(bptree_t *bptree, key_t key, value_t val)
+void register_heartbeat()
 {
     if (heartbeats_counter % 10000 == 0)
     {
         heartbeat_acc(heart, heartbeats_counter, 1);
-        poet_apply_control(state);
+        if (use_poet)
+            poet_apply_control(state);
     }
     heartbeats_counter++;
+}
+
+/* wrapper of set command */
+int db_put(bptree_t *bptree, key_t key, value_t val)
+{
+    register_heartbeat();
     bptree_insert(bptree, key, val);
     return 1;
 }
@@ -160,12 +148,7 @@ int db_put(bptree_t *bptree, key_t key, value_t val)
 /* wrapper of get command */
 bool db_get(bptree_t *bptree, key_t key, value_t *result)
 {
-    if (heartbeats_counter % 10000 == 0)
-    {
-        heartbeat_acc(heart, heartbeats_counter, 1);
-        poet_apply_control(state);
-    }
-    heartbeats_counter++;
+    register_heartbeat();
     return bptree_get(bptree, key, result);
 }
 
