@@ -45,8 +45,8 @@ bool use_poet = false;
 void hb_poet_init(const char *poet_log_name, const char *heartbeats_log_name, bool _use_poet)
 {
     use_poet = _use_poet;
-    float target_heartrate = 300.0;
-    int window_size = 10;
+    float target_heartrate = 190.0;
+    int window_size = 50;
     heartbeats_counter = 0;
 
     if (getenv(PREFIX "_TARGET_HEART_RATE") != NULL)
@@ -99,6 +99,7 @@ void hb_poet_init(const char *poet_log_name, const char *heartbeats_log_name, bo
             fprintf(stderr, "Failed to init poet.\n");
             exit(1);
         }
+        printf("poet init'd\n");
     }
     printf("heartbeat init'd\n");
 }
@@ -121,7 +122,7 @@ bptree_t *db_new(const char *poet_log_name, const char *heartbeats_log_name, boo
     hb_poet_init(poet_log_name, heartbeats_log_name, use_poet);
 
     bptree_t *bptree = malloc(sizeof(bptree_t));
-    bptree_init(bptree);
+    bptree_init(bptree, true);
 
     return bptree;
 }

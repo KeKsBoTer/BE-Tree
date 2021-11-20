@@ -19,19 +19,16 @@
 #include <inttypes.h>
 #include <signal.h>
 
-#define USE_POET
-
 #include "db.h"
 #include "bptree.h"
 #include "queries.h"
-
-pthread_mutex_t printmutex;
 
 /* default parameter settings */
 static size_t num_threads = 1;
 // static size_t num_mget = 1;
 static float duration = 10.0;
 static char *inputfile = NULL;
+static char *output_dir = NULL;
 
 /* db structure is global */
 bptree_t *db;
@@ -49,7 +46,8 @@ static void usage(char *binname)
     printf("%s [-t #] [-b #] [-l trace] [-d #] [-h]\n", binname);
     printf("\t-t #: number of working threads, by default %" PRIu64 "\n", num_threads);
     printf("\t-d #: duration of the test in seconds, by default %f\n", duration);
-    printf("\t-l trace: e.g., /path/to/ycsbtrace, required\n");
+    printf("\t-l  : path to dataset file\n");
+    printf("\t-o  : log directory\n");
     printf("\t-h  : show usage\n");
 }
 
@@ -120,7 +118,7 @@ int main(int argc, char **argv)
     }
 
     char ch;
-    while ((ch = getopt(argc, argv, "t:d:h:l:")) != -1)
+    while ((ch = getopt(argc, argv, "t:d:h:l:o:")) != -1)
     {
         switch (ch)
         {
@@ -132,6 +130,9 @@ int main(int argc, char **argv)
             break;
         case 'l':
             inputfile = optarg;
+            break;
+        case 'o':
+            output_dir = optarg;
             break;
         case 'h':
             usage(argv[0]);
@@ -153,16 +154,22 @@ int main(int argc, char **argv)
     size_t num_queries = queries_init(&queries, inputfile);
 
     pthread_t threads[num_threads];
-    pthread_mutex_init(&printmutex, NULL);
 
     thread_param tp[num_threads];
 
-    db = db_new("poet.log", "heartbeat.log", true);
+    char poet_log_filename[512];
+    char heartbeat_log_filename[512];
+    sprintf(poet_log_filename, "%s/poet.log", output_dir);
+    sprintf(heartbeat_log_filename, "%s/heartbeat.log", output_dir);
+
+    db = db_new(poet_log_filename, heartbeat_log_filename, true);
 
     result_t result;
-    benchmark_n_threads(&result, tp, queries, num_queries, threads, 1);
-    benchmark_n_threads(&result, tp, queries, num_queries, threads, num_threads / 2);
-    benchmark_n_threads(&result, tp, queries, num_queries, threads, num_threads);
+    for (int i = 1; i <= num_threads; i++)
+        benchmark_n_threads(&result, tp, queries, num_queries, threads, i);
+
+    for (int i = num_threads - 1; i > 0; i--)
+        benchmark_n_threads(&result, tp, queries, num_queries, threads, i);
 
     printf("total_time = %.2f\n", result.grand_total_time);
     printf("total_tput = %.2f\n", (float)(result.total_gets + result.total_puts) / result.grand_total_time);
