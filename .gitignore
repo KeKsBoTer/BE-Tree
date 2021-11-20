@@ -12,3 +12,4 @@ datasets/
 **/__pycache__/
 **/bin/
 gmon.out
+**/*.log
