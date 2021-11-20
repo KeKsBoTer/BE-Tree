@@ -1,6 +1,6 @@
 #pragma once
 #include <stdbool.h>
-#include "db.h"
+#include "bptree.h"
 
 /*
  * size of the key in bytes

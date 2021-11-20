@@ -2,7 +2,7 @@
 #include <pthread.h>
 #include <inttypes.h>
 #include "queries.h"
-#include "bptree.h"
+#include "bptree_poet.h"
 
 /* init all queries from the ycsb trace file before issuing them */
 size_t queries_init(query **queries, char *filename)
@@ -109,13 +109,13 @@ void *queries_exec(void *param)
             key_t key = *((key_t *)queries[i].hashed_key);
             if (type == query_put)
             {
-                db_put(p->db, key, (value_t)key);
+                bptree_poet_insert(p->db, key, (value_t)key);
                 p->num_puts++;
             }
             else if (type == query_get)
             {
                 value_t val;
-                bool found = db_get(p->db, key, &val);
+                bool found = bptree_poet_get(p->db, key, &val);
                 p->num_gets++;
                 if (!found)
                 {

@@ -19,7 +19,7 @@
 #include <inttypes.h>
 #include <signal.h>
 
-#include "db.h"
+#include "bptree_poet.h"
 #include "bptree.h"
 #include "queries.h"
 
@@ -160,7 +160,7 @@ int main(int argc, char **argv)
 
     thread_param tp[num_threads];
 
-    db = db_new(NULL, log_file, false);
+    db = bptree_poet_new(NULL, log_file, false);
 
     result_t result;
     benchmark_n_threads(&result, tp, queries, num_queries, threads, num_threads);
@@ -172,7 +172,7 @@ int main(int argc, char **argv)
     printf("total_hitratio = %.4f\n", (float)result.total_hits / result.total_gets);
 
     free(queries);
-    db_free(db);
+    bptree_poet_free(db);
 
     printf("bye\n");
     return 0;

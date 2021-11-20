@@ -25,7 +25,7 @@
 #include <poet/poet.h>
 #include <poet/poet_config.h>
 
-#include "db.h"
+#include "bptree_poet.h"
 #include "bptree.h"
 
 // POET / HEARBEAT related stuff
@@ -117,7 +117,7 @@ void hb_poet_finish()
 }
 
 /* create a dummy data structure */
-bptree_t *db_new(const char *poet_log_name, const char *heartbeats_log_name, bool use_poet)
+bptree_t *bptree_poet_new(const char *poet_log_name, const char *heartbeats_log_name, bool use_poet)
 {
     hb_poet_init(poet_log_name, heartbeats_log_name, use_poet);
 
@@ -139,7 +139,7 @@ void register_heartbeat()
 }
 
 /* wrapper of set command */
-int db_put(bptree_t *bptree, key_t key, value_t val)
+int bptree_poet_insert(bptree_t *bptree, key_t key, value_t val)
 {
     register_heartbeat();
     bptree_insert(bptree, key, val);
@@ -147,14 +147,14 @@ int db_put(bptree_t *bptree, key_t key, value_t val)
 }
 
 /* wrapper of get command */
-bool db_get(bptree_t *bptree, key_t key, value_t *result)
+bool bptree_poet_get(bptree_t *bptree, key_t key, value_t *result)
 {
     register_heartbeat();
     return bptree_get(bptree, key, result);
 }
 
 /* wrapper of free command */
-int db_free(bptree_t *bptree)
+int bptree_poet_free(bptree_t *bptree)
 {
     hb_poet_finish();
 

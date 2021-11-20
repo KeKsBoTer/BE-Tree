@@ -28,13 +28,13 @@
 #include "bptree.h"
 
 /* create a dummy data structure */
-bptree_t *db_new(const char *poet_log_name, const char *heartbeats_log_name, bool use_poet);
+bptree_t *bptree_poet_new(const char *poet_log_name, const char *heartbeats_log_name, bool use_poet);
 
 /* wrapper of set command */
-int db_put(bptree_t *bptree, key_t key, value_t val);
+int bptree_poet_insert(bptree_t *bptree, key_t key, value_t val);
 
 /* wrapper of get command */
-bool db_get(bptree_t *bptree, key_t key, value_t *result);
+bool bptree_poet_get(bptree_t *bptree, key_t key, value_t *result);
 
 /* wrapper of free command */
-int db_free(bptree_t *bptree);
+int bptree_poet_free(bptree_t *bptree);

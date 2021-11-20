@@ -19,7 +19,7 @@
 #include <inttypes.h>
 #include <signal.h>
 
-#include "db.h"
+#include "bptree_poet.h"
 #include "bptree.h"
 #include "queries.h"
 
@@ -162,7 +162,7 @@ int main(int argc, char **argv)
     sprintf(poet_log_filename, "%s/poet.log", output_dir);
     sprintf(heartbeat_log_filename, "%s/heartbeat.log", output_dir);
 
-    db = db_new(poet_log_filename, heartbeat_log_filename, true);
+    db = bptree_poet_new(poet_log_filename, heartbeat_log_filename, true);
 
     result_t result;
     for (int i = 1; i <= num_threads; i++)
@@ -178,7 +178,7 @@ int main(int argc, char **argv)
     printf("total_hitratio = %.4f\n", (float)result.total_hits / result.total_gets);
 
     free(queries);
-    db_free(db);
+    bptree_poet_free(db);
 
     printf("bye\n");
     return 0;
