@@ -1,3 +1,4 @@
+#include <stdbool.h>
 #include "bptree.h"
 #include "pthread.h"
 
@@ -39,8 +40,20 @@ void *rand_get(void *args)
 int main(int argc, char *argv[])
 {
     int tests = 1000;
+    bool use_avx2 = false;
     switch (argc)
     {
+    case 3:
+        use_avx2 = atoi(argv[2]);
+        if (use_avx2 != 1 && use_avx2 != 0)
+        {
+            printf("cannot convert '%s' to bool (0 or 1)\n", argv[2]);
+            exit(1);
+        }
+        if (use_avx2)
+            printf("avx2 is on!\n");
+        else
+            printf("avx2 is off!\n");
     case 2:
         tests = atoi(argv[1]);
         if (tests == 0)
@@ -51,11 +64,11 @@ int main(int argc, char *argv[])
     }
 
     bptree_t *tree = malloc(sizeof(bptree_t));
-    bptree_init(tree);
+    bptree_init(tree, use_avx2);
 
     float insert_ratio = 0.05;
 
-    int num_threads = 4;
+    int num_threads = 2;
     pthread_t threads[num_threads];
 
     args_t *args_insert = malloc(sizeof(args_t));

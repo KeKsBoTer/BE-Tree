@@ -8,3 +8,7 @@ benchmark/*.log
 benchmark/bench_client
 benchmark/bin/*
 datasets/
+**/*.pyc
+**/__pycache__/
+**/bin/
+gmon.out

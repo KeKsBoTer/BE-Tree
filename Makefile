@@ -4,13 +4,10 @@ LDFLAGS = -lpthread -lm
 TARGS = bin/bptree_test 
 INCLUDE = -I ./include
 
-# ifeq ($(mode), debug)
-CFLAGS+=-g
-# else
-#CFLAGS += -O2
-# endif
-
 all: $(TARGS)
+
+debug: CFLAGS+=-g
+debug: $(TARGS)
 
 bin/bptree.o: include/bptree.h src/bptree.c 
 	$(CC) $(CFLAGS) $(INCLUDE) -c src/bptree.c $(LDFLAGS) && mv *.o bin/

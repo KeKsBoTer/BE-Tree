@@ -60,15 +60,9 @@ typedef int64_t key_t;
 
 typedef u_int64_t value_t;
 
-#ifdef __AVX2__
-#define key_cmp_t __m256i
 #define avx_broadcast(a) _mm256_set1_epi(a)
-#else
-#define key_cmp_t key_t
-#define avx_broadcast(a) (a)
-#endif
 
-//#define BPTREE_SECURE_NODE_ACCESS
+#define BPTREE_SECURE_NODE_ACCESS
 
 typedef struct node_t
 {
@@ -91,17 +85,14 @@ typedef struct node_t
 } __attribute__((aligned(32))) node_t;
 
 node_t *node_create(bool is_leaf);
-#if __AVX2__
-uint16_t find_index(key_t keys[ORDER - 1], int size, __m256i key);
-#else
+uint16_t find_index_avx2(key_t keys[ORDER - 1], int size, __m256i key);
 uint16_t find_index(key_t keys[ORDER - 1], int size, key_t key);
-#endif
 
-bool node_get(node_t *n, key_t key, value_t *result, uint64_t *inc_ops);
+bool node_get(node_t *n, key_t key, value_t *result, uint64_t *inc_ops, bool use_avx2);
 
 void node_split(node_t *n, uint16_t i, node_t *child);
 
-node_t *node_insert(node_t *n, key_t key, value_t value, node_t **free_after, uint64_t *inc_ops);
+node_t *node_insert(node_t *n, key_t key, value_t value, node_t **free_after, uint64_t *inc_ops, bool use_avx2);
 
 void node_free(node_t *n);
 typedef struct bptree_t
@@ -109,9 +100,10 @@ typedef struct bptree_t
     node_t *root;
     pthread_spinlock_t lock;
     uint64_t __attribute__((aligned(8))) inc_ops;
+    bool use_avx2;
 } bptree_t;
 
-void bptree_init(bptree_t *tree);
+void bptree_init(bptree_t *tree, bool use_avx2);
 
 bool bptree_get(bptree_t *tree, key_t key, value_t *result);
 

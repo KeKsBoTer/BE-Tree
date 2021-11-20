@@ -9,6 +9,10 @@
 #include "bptree.h"
 #include "spinlock.h"
 
+#define atomic_add(a, b) __atomic_fetch_add(a, b, __ATOMIC_RELAXED)
+#define atomic_sub(a, b) __atomic_fetch_sub(a, b, __ATOMIC_RELAXED)
+#define atomic_exchange(a, b) __atomic_exchange_n(a, b, __ATOMIC_RELAXED)
+
 node_t *node_create(bool is_leaf)
 {
     node_t *n = aligned_alloc(32, sizeof(node_t));
@@ -30,23 +34,25 @@ node_t *node_clone(node_t *node)
 
 static inline node_t *node_access(node_t **node, uint64_t *inc_ops)
 {
+
 #ifdef BPTREE_SECURE_NODE_ACCESS
-    __atomic_fetch_add(inc_ops, 1, __ATOMIC_RELAXED);
+    atomic_add(inc_ops, 1);
 #endif
+
     node_t *n = *node;
-    __atomic_fetch_add(&n->rc_cnt, 1, __ATOMIC_RELAXED);
+    atomic_add(&n->rc_cnt, 1);
+
 #ifdef BPTREE_SECURE_NODE_ACCESS
-    __atomic_fetch_sub(inc_ops, 1, __ATOMIC_RELAXED);
+    atomic_sub(inc_ops, 1);
 #endif
+
     return n;
 }
 
 static inline void exit_node(node_t *node)
 {
-    __atomic_sub_fetch(&node->rc_cnt, 1, __ATOMIC_RELAXED);
+    atomic_sub(&node->rc_cnt, 1);
 }
-
-#if __AVX2__
 
 static inline uint64_t cmp(__m256i x_vec, key_t *y_ptr)
 {
@@ -55,7 +61,7 @@ static inline uint64_t cmp(__m256i x_vec, key_t *y_ptr)
     return _mm256_movemask((__m256)mask);
 }
 
-uint16_t find_index(key_t keys[ORDER - 1], int size, __m256i key)
+uint16_t find_index_avx2(key_t keys[ORDER - 1], int size, __m256i key)
 {
     uint64_t mask = cmp(key, keys);
     // TODO check if conditional is faster / slower
@@ -64,7 +70,7 @@ uint16_t find_index(key_t keys[ORDER - 1], int size, __m256i key)
     int i = __builtin_ffs(~mask) - 1;
     return i;
 }
-#else
+
 uint16_t find_index(key_t keys[ORDER - 1], int size, key_t key)
 {
     int i = 0;
@@ -72,19 +78,26 @@ uint16_t find_index(key_t keys[ORDER - 1], int size, key_t key)
         i++;
     return i;
 }
-#endif
 
-bool node_get(node_t *n, key_t key, value_t *result, uint64_t *inc_ops)
+bool node_get(node_t *n, key_t key, value_t *result, uint64_t *inc_ops, bool use_avx2)
 {
-    key_cmp_t cmp_key = avx_broadcast(key);
+    __m256i cmp_key;
+    if (use_avx2)
+        cmp_key = avx_broadcast(key);
+
     while (true)
     {
-        uint16_t i = find_index(n->keys, n->n, cmp_key);
+        uint16_t i;
+        if (use_avx2)
+            i = find_index_avx2(n->keys, n->n, cmp_key);
+        else
+            i = find_index(n->keys, n->n, key);
+
         bool eq = n->keys[i] == key;
         if (n->is_leaf)
         {
             if (eq)
-                *result = __atomic_load_n(&n->children.values[i], __ATOMIC_RELAXED);
+                *result = n->children.values[i];
             exit_node(n);
             return eq;
         }
@@ -106,11 +119,11 @@ void delayed_free(node_t *node, uint64_t *inc_ops)
     {
 #ifdef BPTREE_SECURE_NODE_ACCESS
         // wait until all reference counter operations are done
-        while (__atomic_load_n(inc_ops, __ATOMIC_RELAXED) > 0)
+        while (*inc_ops > 0)
             ;
 #endif
         // wait until reference counter of node is done to zero
-    } while (__atomic_load_n(&node->rc_cnt, __ATOMIC_RELAXED) > 0);
+    } while (node->rc_cnt > 0);
     free(node);
 }
 
@@ -154,16 +167,20 @@ void node_split(node_t *n, uint16_t i, node_t *child)
     n->n++;
 }
 
-node_t *node_insert(node_t *n, key_t key, value_t value, node_t **free_after, uint64_t *inc_ops)
+node_t *node_insert(node_t *n, key_t key, value_t value, node_t **free_after, uint64_t *inc_ops, bool use_avx2)
 {
-    key_cmp_t cmp_key = avx_broadcast(key);
-    uint16_t i = find_index(n->keys, n->n, cmp_key);
+    uint16_t i;
+    if (use_avx2)
+        i = find_index_avx2(n->keys, n->n, avx_broadcast(key));
+    else
+        i = find_index(n->keys, n->n, key);
+
     bool eq = n->keys[i] == key;
     if (n->is_leaf)
     {
         if (eq)
         {
-            __atomic_store_n(&n->children.values[i], value, __ATOMIC_RELAXED);
+            n->children.values[i] = value;
             return NULL;
         }
         else
@@ -206,10 +223,10 @@ node_t *node_insert(node_t *n, key_t key, value_t value, node_t **free_after, ui
                 *free_after = to_split;
 
             node_t *free_after_2 = NULL;
-            node_t *new_next = node_insert(next, key, value, &free_after_2, inc_ops);
+            node_t *new_next = node_insert(next, key, value, &free_after_2, inc_ops, use_avx2);
             if (new_next != NULL)
             {
-                node_t *old_next = __atomic_exchange_n(&n_clone->children.nodes[i], new_next, __ATOMIC_RELAXED);
+                node_t *old_next = atomic_exchange(&n_clone->children.nodes[i], new_next);
                 delayed_free(old_next, inc_ops);
                 if (free_after_2 != NULL)
                     delayed_free(free_after_2, inc_ops);
@@ -222,10 +239,10 @@ node_t *node_insert(node_t *n, key_t key, value_t value, node_t **free_after, ui
             node_t *next = n->children.nodes[i];
 
             node_t *free_after_2 = NULL;
-            node_t *new_next = node_insert(next, key, value, &free_after_2, inc_ops);
+            node_t *new_next = node_insert(next, key, value, &free_after_2, inc_ops, use_avx2);
             if (new_next != NULL)
             {
-                node_t *old_next = __atomic_exchange_n(&n->children.nodes[i], new_next, __ATOMIC_RELAXED);
+                node_t *old_next = atomic_exchange(&n->children.nodes[i], new_next);
                 delayed_free(old_next, inc_ops);
                 if (free_after_2 != NULL)
                     delayed_free(free_after_2, inc_ops);
@@ -245,11 +262,12 @@ void node_free(node_t *n)
     free(n);
 }
 
-void bptree_init(bptree_t *tree)
+void bptree_init(bptree_t *tree, bool use_avx2)
 {
     tree->root = NULL;
     pthread_spin_init(&tree->lock, 0);
     tree->inc_ops = 0;
+    tree->use_avx2 = use_avx2;
 }
 
 bool bptree_get(bptree_t *tree, key_t key, value_t *result)
@@ -258,7 +276,7 @@ bool bptree_get(bptree_t *tree, key_t key, value_t *result)
     if (tree->root != NULL)
     {
         node_t *root = node_access(&tree->root, &tree->inc_ops);
-        found = node_get(root, key, result, &tree->inc_ops);
+        found = node_get(root, key, result, &tree->inc_ops, tree->use_avx2);
     }
     return found;
 }
@@ -288,26 +306,26 @@ void bptree_insert(bptree_t *tree, key_t key, value_t value)
             node_t *next = s->children.nodes[i];
 
             node_t *free_after = NULL;
-            node_t *new_next = node_insert(next, key, value, &free_after, &tree->inc_ops);
+            node_t *new_next = node_insert(next, key, value, &free_after, &tree->inc_ops, tree->use_avx2);
             if (new_next != NULL)
             {
-                node_t *old_next = __atomic_exchange_n(&s->children.nodes[i], new_next, __ATOMIC_RELAXED);
+                node_t *old_next = atomic_exchange(&s->children.nodes[i], new_next);
                 delayed_free(old_next, &tree->inc_ops);
                 if (free_after != NULL)
                     delayed_free(free_after, &tree->inc_ops);
             }
 
             // Change root
-            node_t *old_root = __atomic_exchange_n(&tree->root, s, __ATOMIC_RELAXED);
+            node_t *old_root = atomic_exchange(&tree->root, s);
             delayed_free(old_root, &tree->inc_ops);
         }
         else
         {
             node_t *free_after = NULL;
-            node_t *new_root = node_insert(tree->root, key, value, &free_after, &tree->inc_ops);
+            node_t *new_root = node_insert(tree->root, key, value, &free_after, &tree->inc_ops, tree->use_avx2);
             if (new_root != NULL)
             {
-                node_t *old_root = __atomic_exchange_n(&tree->root, new_root, __ATOMIC_RELAXED);
+                node_t *old_root = atomic_exchange(&tree->root, new_root);
                 delayed_free(old_root, &tree->inc_ops);
                 if (free_after != NULL)
                     delayed_free(free_after, &tree->inc_ops);
