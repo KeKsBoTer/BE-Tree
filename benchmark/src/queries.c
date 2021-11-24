@@ -106,7 +106,7 @@ void *queries_exec(void *param)
         for (size_t i = 0; i < p->num_ops; i++)
         {
             enum query_types type = queries[i].type;
-            key_t key = *((key_t *)queries[i].hashed_key);
+            bp_key_t key = *((bp_key_t *)queries[i].hashed_key);
             if (type == query_put)
             {
                 bptree_poet_insert(p->db, key, (value_t)key);

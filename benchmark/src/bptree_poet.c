@@ -139,7 +139,7 @@ void register_heartbeat()
 }
 
 /* wrapper of set command */
-int bptree_poet_insert(bptree_t *bptree, key_t key, value_t val)
+int bptree_poet_insert(bptree_t *bptree, bp_key_t key, value_t val)
 {
     register_heartbeat();
     bptree_insert(bptree, key, val);
@@ -147,7 +147,7 @@ int bptree_poet_insert(bptree_t *bptree, key_t key, value_t val)
 }
 
 /* wrapper of get command */
-bool bptree_poet_get(bptree_t *bptree, key_t key, value_t *result)
+bool bptree_poet_get(bptree_t *bptree, bp_key_t key, value_t *result)
 {
     register_heartbeat();
     return bptree_get(bptree, key, result);

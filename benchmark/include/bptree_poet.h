@@ -31,10 +31,10 @@
 bptree_t *bptree_poet_new(const char *poet_log_name, const char *heartbeats_log_name, bool use_poet, bool use_avx2);
 
 /* wrapper of set command */
-int bptree_poet_insert(bptree_t *bptree, key_t key, value_t val);
+int bptree_poet_insert(bptree_t *bptree, bp_key_t key, value_t val);
 
 /* wrapper of get command */
-bool bptree_poet_get(bptree_t *bptree, key_t key, value_t *result);
+bool bptree_poet_get(bptree_t *bptree, bp_key_t key, value_t *result);
 
 /* wrapper of free command */
 int bptree_poet_free(bptree_t *bptree);

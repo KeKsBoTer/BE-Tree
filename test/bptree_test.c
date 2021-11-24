@@ -14,7 +14,7 @@ void *rand_insert(void *args)
     srand(0);
     for (int i = 0; i < t_args->tests; i++)
     {
-        key_t x = rand();
+        bp_key_t x = rand();
         bptree_insert(t_args->tree, x, (value_t)x);
     }
     return NULL;
@@ -26,12 +26,12 @@ void *rand_get(void *args)
     srand(0);
     for (int i = 0; i < t_args->tests; i++)
     {
-        key_t x = rand();
+        bp_key_t x = rand();
         value_t v;
         bool found = bptree_get(t_args->tree, x, &v);
         if (found && x != v)
         {
-            printf("ERROR: %d != %ld\n", x, v);
+            printf("ERROR: %ld != %ld\n", x, v);
         }
     }
     return NULL;
