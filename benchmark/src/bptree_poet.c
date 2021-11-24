@@ -117,12 +117,12 @@ void hb_poet_finish()
 }
 
 /* create a dummy data structure */
-bptree_t *bptree_poet_new(const char *poet_log_name, const char *heartbeats_log_name, bool use_poet)
+bptree_t *bptree_poet_new(const char *poet_log_name, const char *heartbeats_log_name, bool use_poet, bool use_avx2)
 {
     hb_poet_init(poet_log_name, heartbeats_log_name, use_poet);
 
     bptree_t *bptree = malloc(sizeof(bptree_t));
-    bptree_init(bptree, true);
+    bptree_init(bptree, use_avx2);
 
     return bptree;
 }
@@ -135,7 +135,7 @@ void register_heartbeat()
         if (use_poet)
             poet_apply_control(state);
     }
-    heartbeats_counter++;
+    __atomic_fetch_add(&heartbeats_counter, 1, __ATOMIC_RELAXED);
 }
 
 /* wrapper of set command */

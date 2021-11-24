@@ -116,9 +116,9 @@ int main(int argc, char **argv)
         usage(argv[0]);
         exit(-1);
     }
-
+    bool use_avx2 = false;
     char ch;
-    while ((ch = getopt(argc, argv, "t:d:h:l:o:")) != -1)
+    while ((ch = getopt(argc, argv, "t:d:h:l:o:a:")) != -1)
     {
         switch (ch)
         {
@@ -133,6 +133,9 @@ int main(int argc, char **argv)
             break;
         case 'o':
             output_dir = optarg;
+            break;
+        case 'a':
+            use_avx2 = atoi(optarg);
             break;
         case 'h':
             usage(argv[0]);
@@ -162,7 +165,7 @@ int main(int argc, char **argv)
     sprintf(poet_log_filename, "%s/poet.log", output_dir);
     sprintf(heartbeat_log_filename, "%s/heartbeat.log", output_dir);
 
-    db = bptree_poet_new(poet_log_filename, heartbeat_log_filename, true);
+    db = bptree_poet_new(poet_log_filename, heartbeat_log_filename, true, use_avx2);
 
     result_t result;
     for (int i = 1; i <= num_threads; i++)

@@ -64,10 +64,9 @@ static inline uint64_t cmp(__m256i x_vec, key_t *y_ptr)
 uint16_t find_index_avx2(key_t keys[ORDER - 1], int size, __m256i key)
 {
     uint64_t mask = cmp(key, keys);
-    // TODO check if conditional is faster / slower
-    if (size > REG_VALUES)
-        mask += cmp(key, &keys[REG_VALUES]) << REG_VALUES;
+    mask += cmp(key, &keys[REG_VALUES]) << REG_VALUES;
     int i = __builtin_ffs(~mask) - 1;
+
     return i;
 }
 
@@ -144,7 +143,7 @@ void node_split(node_t *n, uint16_t i, node_t *child)
     else
         memcpy_sized(right->children.nodes, child->children.nodes + min_deg, right->n + 1);
 
-    memcpy_sized(right->keys, child->keys + min_deg - k, right->n + k);
+    memcpy_sized(right->keys, child->keys + min_deg - k, right->n + k - 1);
 
     // Reduce the number of keys in y
     child->n = min_deg - 1;

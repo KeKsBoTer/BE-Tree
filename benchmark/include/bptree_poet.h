@@ -28,7 +28,7 @@
 #include "bptree.h"
 
 /* create a dummy data structure */
-bptree_t *bptree_poet_new(const char *poet_log_name, const char *heartbeats_log_name, bool use_poet);
+bptree_t *bptree_poet_new(const char *poet_log_name, const char *heartbeats_log_name, bool use_poet, bool use_avx2);
 
 /* wrapper of set command */
 int bptree_poet_insert(bptree_t *bptree, key_t key, value_t val);

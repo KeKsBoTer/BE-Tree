@@ -13,3 +13,4 @@ datasets/
 **/bin/
 gmon.out
 **/*.log
+**/*.ipynb

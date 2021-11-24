@@ -119,8 +119,10 @@ int main(int argc, char **argv)
         exit(-1);
     }
 
+    bool use_avx2 = false;
+
     char ch;
-    while ((ch = getopt(argc, argv, "t:d:h:l:o:")) != -1)
+    while ((ch = getopt(argc, argv, "t:d:h:l:o:a:")) != -1)
     {
         switch (ch)
         {
@@ -132,6 +134,9 @@ int main(int argc, char **argv)
             break;
         case 'l':
             inputfile = optarg;
+            break;
+        case 'a':
+            use_avx2 = atoi(optarg);
             break;
         case 'o':
             log_file = optarg;
@@ -160,7 +165,7 @@ int main(int argc, char **argv)
 
     thread_param tp[num_threads];
 
-    db = bptree_poet_new(NULL, log_file, false);
+    db = bptree_poet_new(NULL, log_file, false, use_avx2);
 
     result_t result;
     benchmark_n_threads(&result, tp, queries, num_queries, threads, num_threads);

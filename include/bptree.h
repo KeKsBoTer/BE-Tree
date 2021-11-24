@@ -62,7 +62,7 @@ typedef u_int64_t value_t;
 
 #define avx_broadcast(a) _mm256_set1_epi(a)
 
-#define BPTREE_SECURE_NODE_ACCESS
+// #define BPTREE_SECURE_NODE_ACCESS
 
 typedef struct node_t
 {
