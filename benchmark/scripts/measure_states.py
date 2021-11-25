@@ -1,8 +1,5 @@
 import csv
-import time
 import subprocess
-from itertools import product
-from multiprocessing import cpu_count
 from utils import set_cpu_freq, set_scaling_governor, system_cpu_config
 
 if __name__ == '__main__':

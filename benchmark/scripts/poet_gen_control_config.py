@@ -13,6 +13,9 @@
 #     name: python3
 # ---
 
+import csv
+from utils import system_cpu_config
+import glob
 from matplotlib import pyplot as plt
 import numpy as np
 import pandas as pd
@@ -22,30 +25,27 @@ sns.set()
 
 def ratio_for_id(state_id):
     df_heartbeats = pd.read_csv(
-        f"measurements/heartbeat_{state_id}.log", delimiter=" ", skipinitialspace=True, index_col="Beat")
+        f"experiments/measurements/heartbeat_{state_id}.log", delimiter=" ", skipinitialspace=True, index_col="Beat")
     df_heartbeats = df_heartbeats.groupby("Tag").mean()
     rate = df_heartbeats["Global_Rate"].mean()
     energy = df_heartbeats["Global_Power"].mean()
-    return {"heartrate":rate,"power":energy}
+    return {"heartrate": rate, "power": energy}
 
 
-import glob
 num_states = len(glob.glob("measurements/heartbeat_*.log"))
 results = [ratio_for_id(i) for i in range(num_states)]
 len(results)
 
 # +
-from utils import system_cpu_config
 
 config = system_cpu_config()
 
 # +
-import pandas as pd
 
 areas = {}
 
-for cores, g in pd.DataFrame(config,dtype=int).T.groupby("cores"):
-    areas[cores] = [g.index.astype("int").min(),g.index.astype("int").max()]
+for cores, g in pd.DataFrame(config, dtype=int).T.groupby("cores"):
+    areas[cores] = [g.index.astype("int").min(), g.index.astype("int").max()]
 
 areas
 
@@ -60,7 +60,7 @@ for n in range(4):
     ax1.plot([i for i in range(num_states) if config[i]["cores"] == n],
              [results[i]["heartrate"]/results[0]["heartrate"]
                  for i in range(num_states) if config[i]["cores"] == n],
-             "--o", label="Throughput" if n==0 else None, color="C0")
+             "--o", label="Throughput" if n == 0 else None, color="C0")
 
 ax1.set_xticks(range(num_states)[::4])
 
@@ -68,7 +68,7 @@ for n in range(4):
     ax1.plot([i for i in range(num_states) if config[i]["cores"] == n],
              [results[i]["power"]/results[0]["power"]
                  for i in range(num_states) if config[i]["cores"] == n],
-             "--o", label="Energy" if n==0 else None, color="C1")
+             "--o", label="Energy" if n == 0 else None, color="C1")
 
 ax1.set_xlabel('State Number')
 ax1.legend()
@@ -77,18 +77,15 @@ fig.savefig("figures/cpu_states.pdf", dpi=300)
 
 
 # +
-import csv
 
-with open("config/control_config","w") as f:
-    writer = csv.DictWriter(f,["#id","Speedup","Power"],delimiter="\t")
+with open("config/control_config", "w") as f:
+    writer = csv.DictWriter(f, ["#id", "Speedup", "Power"], delimiter="\t")
     writer.writeheader()
-    for i,r in enumerate(results):
+    for i, r in enumerate(results):
         writer.writerow({
-            "#id":i,
-            "Speedup":round(r["heartrate"] / results[0]["heartrate"],6),
-            "Power":round(r["power"] / results[0]["power"],6)
+            "#id": i,
+            "Speedup": round(r["heartrate"] / results[0]["heartrate"], 6),
+            "Power": round(r["power"] / results[0]["power"], 6)
         })
 
 # -
-
-

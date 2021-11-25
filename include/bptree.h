@@ -61,13 +61,13 @@ typedef int64_t bp_key_t;
 #define ORDER (DCACHE_LINESIZE / KEY_SIZE + 1)
 
 // value type in b+tree
-typedef u_int64_t value_t;
+typedef uintptr_t value_t;
 
 // defines whether "super" version of node access is used.
 // A counter in bptree is used to keep track of ongoing
 // node_access operations and a node is only freed
 // when this counter is down to zero.
-// #define BPTREE_SECURE_NODE_ACCESS
+#define BPTREE_SECURE_NODE_ACCESS
 
 // a node within the b+tree
 typedef struct node_t

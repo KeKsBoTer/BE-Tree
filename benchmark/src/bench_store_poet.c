@@ -47,6 +47,7 @@ static void usage(char *binname)
     printf("\t-t #: number of working threads, by default %" PRIu64 "\n", num_threads);
     printf("\t-d #: duration of the test in seconds, by default %f\n", duration);
     printf("\t-l  : path to dataset file\n");
+    printf("\t-a  : turn AVX2 on/off\n");
     printf("\t-o  : log directory\n");
     printf("\t-h  : show usage\n");
 }

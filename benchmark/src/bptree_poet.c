@@ -45,8 +45,8 @@ bool use_poet = false;
 void hb_poet_init(const char *poet_log_name, const char *heartbeats_log_name, bool _use_poet)
 {
     use_poet = _use_poet;
-    float target_heartrate = 190.0;
-    int window_size = 50;
+    float target_heartrate = 180.0;
+    int window_size = 200;
     heartbeats_counter = 0;
 
     if (getenv(PREFIX "_TARGET_HEART_RATE") != NULL)
