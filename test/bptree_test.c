@@ -68,7 +68,7 @@ int main(int argc, char *argv[])
 
     float insert_ratio = 0.05;
 
-    int num_threads = 2;
+    int num_threads = 4;
     pthread_t threads[num_threads];
 
     args_t *args_insert = malloc(sizeof(args_t));

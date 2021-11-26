@@ -98,11 +98,11 @@ static inline uint64_t cmp(__m256i x_vec, bp_key_t *y_ptr)
  * @param key search key as avx2 register (key repeated to fill 256bit register)
  * @return uint16_t First index i where keys[i] >= key 
  */
-uint16_t find_index_avx2(bp_key_t keys[ORDER - 1], int size, __m256i key)
+uint16_t find_index_avx2(bp_key_t keys[ORDER - 1], __m256i key)
 {
     uint64_t mask = cmp(key, keys);
     // IMPORTANT: This second compare could only performed
-    // if size > NUM_REG_VALUES.
+    // if node->n > NUM_REG_VALUES.
     // BUT due to the introduced branching the performance
     // than is as good as the normal find_index version
     mask += cmp(key, &keys[NUM_REG_VALUES]) << NUM_REG_VALUES;
@@ -138,7 +138,7 @@ bool node_get(node_t *n, bp_key_t key, value_t *result, uint64_t *inc_ops, bool 
     {
         uint16_t i;
         if (use_avx2)
-            i = find_index_avx2(n->keys, n->n, cmp_key);
+            i = find_index_avx2(n->keys, cmp_key);
         else
             i = find_index(n->keys, n->n, key);
 
@@ -172,15 +172,16 @@ bool node_get(node_t *n, bp_key_t key, value_t *result, uint64_t *inc_ops, bool 
  */
 void delayed_free(node_t *node, uint64_t *inc_ops)
 {
+#ifdef BPTREE_SECURE_NODE_ACCESS
     do
     {
-#ifdef BPTREE_SECURE_NODE_ACCESS
-        // wait until all reference counter operations are done
-        while (*inc_ops > 0)
-            ;
 #endif
-        // wait until reference counter of node is done to zero
-    } while (node->rc_cnt > 0);
+        while (node->rc_cnt > 0)
+            ;
+
+#ifdef BPTREE_SECURE_NODE_ACCESS
+    } while (*inc_ops > 0);
+#endif
     free(node);
 }
 
@@ -255,7 +256,7 @@ node_t *node_insert(node_t *n, bp_key_t key, value_t value, node_t **free_after,
 {
     uint16_t i;
     if (use_avx2)
-        i = find_index_avx2(n->keys, n->n, _mm256_set1_epi(key));
+        i = find_index_avx2(n->keys, _mm256_set1_epi(key));
     else
         i = find_index(n->keys, n->n, key);
 

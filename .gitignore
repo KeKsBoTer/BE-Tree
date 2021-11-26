@@ -14,3 +14,5 @@ datasets/
 gmon.out
 **/*.log
 **/*.ipynb
+**/.ipynb_checkpoints/
+benchmark/generation/
