@@ -5,7 +5,7 @@
 /*
  * size of the key in bytes
  */
-#define NKEY 4
+#define NKEY 8
 #define NVAL 24
 
 /* type of each query */

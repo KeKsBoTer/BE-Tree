@@ -17,7 +17,7 @@
 /**
  * @brief size of the keys in the binary tree in bytes
  */
-#define KEY_SIZE 4
+#define KEY_SIZE 8
 
 // number of values that can fit into one AVX2 register
 #define NUM_REG_VALUES ((SIMD_REGISTER_SIZE) / (KEY_SIZE))
